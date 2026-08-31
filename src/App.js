@@ -22,18 +22,18 @@ function App() {
         },
         (error) => {
           console.error('Error getting location:', error);
-          // Default to Bangalore coordinates if location access denied
+          // Default to Bhatkal coordinates if location access denied
           setUserLocation({
-            lat: 12.9716,
-            lng: 77.5946
+            lat: 13.9667,
+            lng: 74.5667
           });
         }
       );
     } else {
-      // Default location
+      // Default to Bhatkal location
       setUserLocation({
-        lat: 12.9716,
-        lng: 77.5946
+        lat: 13.9667,
+        lng: 74.5667
       });
     }
   }, []);
