@@ -7,7 +7,6 @@ numpy==1.26.4
 scikit-learn==1.4.2
 joblib==1.4.0
 pandas==2.2.2
-anthropic==0.40.0
 twilio==9.3.0
 gunicorn==21.2.0
 gevent
