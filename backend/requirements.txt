@@ -3,3 +3,11 @@ Flask-CORS==4.0.0
 Flask-SocketIO==5.3.5
 python-socketio==5.10.0
 geopy==2.4.1
+numpy==1.26.4
+scikit-learn==1.4.2
+joblib==1.4.0
+pandas==2.2.2
+anthropic==0.40.0
+twilio==9.3.0
+gunicorn==21.2.0
+eventlet==0.35.2

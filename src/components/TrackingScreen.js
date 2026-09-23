@@ -4,6 +4,8 @@ import L from 'leaflet';
 import io from 'socket.io-client';
 import './TrackingScreen.css';
 import 'leaflet/dist/leaflet.css';
+import HospitalScoreboard from './HospitalScoreboard';
+import EmergencyChatbot from './EmergencyChatbot';
 
 // Fix for default marker icons in react-leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -38,7 +40,7 @@ function TrackingScreen({ data, onBack }) {
   const [showSuggestions, setShowSuggestions] = useState(true);
 
   useEffect(() => {
-    const socket = io('http://localhost:5000');
+    const socket = io(process.env.REACT_APP_API_URL || `http://${window.location.hostname}:5000`);
 
     socket.on('connect', () => {
       console.log('Connected to tracking server');
@@ -205,7 +207,16 @@ function TrackingScreen({ data, onBack }) {
             )}
           </div>
         )}
+
+        {/* Hospital Scoring System - below the fold, as requested */}
+        <HospitalScoreboard scores={data.hospital_scores} />
       </div>
+
+      <EmergencyChatbot
+        emergencyType={data.emergency_type}
+        severity={data.severity}
+        eta={data.eta}
+      />
     </div>
   );
 }

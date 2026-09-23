@@ -10,13 +10,15 @@
     "eject": "react-scripts eject"
   },
   "dependencies": {
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "axios": "^1.6.0",
+    "leaflet": "^1.9.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
     "react-leaflet": "^4.2.1",
-    "leaflet": "^1.9.4",
-    "socket.io-client": "^4.6.1",
-    "axios": "^1.6.0"
+    "react-scripts": "5.0.1",
+    "socket.io-client": "^4.6.1"
   },
   "eslintConfig": {
     "extends": [

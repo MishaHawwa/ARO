@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import LoadingScreen from './components/LoadingScreen';
 import TrackingScreen from './components/TrackingScreen';
+import AmbulanceApp from './components/AmbulanceApp';
 import './App.css';
 
-function App() {
+function CitizenApp() {
   const [screen, setScreen] = useState('dashboard'); // dashboard, loading, tracking
   const [emergencyData, setEmergencyData] = useState(null);
   const [selectedEmergency, setSelectedEmergency] = useState(null);
@@ -42,9 +43,11 @@ function App() {
     setSelectedEmergency(emergencyType);
     setScreen('loading');
 
-    // Simulate API call to find best hospital
+    const API_BASE_URL = process.env.REACT_APP_API_URL || `http://${window.location.hostname}:5000`;
+
+    // API call to find best hospital
     setTimeout(() => {
-      fetch('http://localhost:5000/api/emergency', {
+      fetch(`${API_BASE_URL}/api/emergency`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -89,6 +92,16 @@ function App() {
       )}
     </div>
   );
+}
+
+// Simple path-based split (no react-router needed): the ambulance crew
+// opens http://<host>:3000/ambulance?id=KA-19-EM-001 on their device,
+// citizens get the normal dashboard/tracking flow at "/".
+function App() {
+  if (window.location.pathname.startsWith('/ambulance')) {
+    return <AmbulanceApp />;
+  }
+  return <CitizenApp />;
 }
 
 export default App;

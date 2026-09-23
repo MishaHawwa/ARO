@@ -1,0 +1,9 @@
+{
+  "appId": "com.emergency.app",
+  "appName": "Emergency System",
+  "webDir": "build",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}
