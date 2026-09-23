@@ -813,7 +813,7 @@ try:
     TWILIO_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
     TWILIO_FROM = os.environ.get('TWILIO_FROM_NUMBER')
     twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if (TWILIO_SID and TWILIO_TOKEN) else None
-except ImportError:
+except Exception as e:
     twilio_client = None
 
 
@@ -970,7 +970,7 @@ def generate_offline_chat_response(user_message, emergency_type):
 try:
     import anthropic
     anthropic_client = anthropic.Anthropic() if os.environ.get('ANTHROPIC_API_KEY') else None
-except ImportError:
+except Exception as e:
     anthropic_client = None
 
 
