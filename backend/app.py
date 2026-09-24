@@ -968,10 +968,15 @@ def generate_offline_chat_response(user_message, emergency_type):
     return f"Please stay calm. Keep the patient in a comfortable position, monitor breathing, and wait for the emergency team."
 
 try:
-    import anthropic
-    anthropic_client = anthropic.Anthropic() if os.environ.get('ANTHROPIC_API_KEY') else None
+    import google.generativeai as genai
+    gemini_key = os.environ.get('GEMINI_API_KEY')
+    if gemini_key:
+        genai.configure(api_key=gemini_key)
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+    else:
+        gemini_model = None
 except Exception as e:
-    anthropic_client = None
+    gemini_model = None
 
 
 @app.route('/api/chat', methods=['POST'])
@@ -986,7 +991,7 @@ def emergency_chat():
     if not user_message:
         return jsonify({'error': 'message is required'}), 400
 
-    if anthropic_client is None:
+    if gemini_model is None:
         # Use intelligent offline first-aid guidance engine when API key is not set
         reply_text = generate_offline_chat_response(user_message, emergency_type)
         return jsonify({'reply': reply_text})
@@ -1006,20 +1011,17 @@ def emergency_chat():
         f"guidance only."
     )
 
-    messages = history[-6:] + [{"role": "user", "content": user_message}]
+    prompt = f"System Context:\n{system_prompt}\n\nConversation History:\n"
+    for msg in history[-6:]:
+        role = "Assistant" if msg['role'] == 'assistant' else "User"
+        prompt += f"{role}: {msg['content']}\n"
+    prompt += f"User: {user_message}\nAssistant:"
 
     try:
-        result = anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=200,
-            system=system_prompt,
-            messages=messages,
-        )
-        reply_text = "".join(
-            block.text for block in result.content if block.type == "text"
-        )
+        response = gemini_model.generate_content(prompt)
+        reply_text = response.text.replace('*', '').strip() # Remove any markdown stars
     except Exception as e:
-        print(f"[Chat] Anthropic API error: {e}")
+        print(f"[Chat] Gemini API error: {e}")
         reply_text = generate_offline_chat_response(user_message, emergency_type)
 
     return jsonify({'reply': reply_text})
