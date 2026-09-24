@@ -2,7 +2,6 @@
   <h1>🚨 AI-Driven Emergency & Hospital Optimization System</h1>
   <p><i>A smart, real-time emergency response platform that uses Machine Learning to optimize hospital selection, dispatch ambulances, and predict arrival times.</i></p>
 
-  [![Build Time](https://img.shields.io/badge/build%20time-4%20hours-blue)](#)
   [![Tech Stack](https://img.shields.io/badge/stack-React%20%2B%20Flask-orange)](#)
   [![Real-Time](https://img.shields.io/badge/real--time-Socket.IO-brightgreen)](#)
   [![ML](https://img.shields.io/badge/ML-scikit--learn-yellow)](#)
@@ -11,23 +10,23 @@
 
 ---
 
-## 📖 Overview
+## Overview
 
 The **AI-Driven Emergency and Hospital Optimization System** bridges the gap between citizens in distress and emergency medical services. By leveraging Machine Learning and real-time WebSockets, this platform ensures patients are routed to the *right* hospital (based on ICU and specialist availability) rather than just the *closest* one, while predicting highly accurate ambulance ETAs.
 
 ---
 
-## ✨ Core Features
+## Core Features
 
-1. **🏥 Intelligent Hospital Selection:** Uses a scoring algorithm that weighs geographical distance against real-time hospital resource availability (beds, specialized ICUs).
-2. **🚑 Real-Time Ambulance Dispatch & Tracking:** Automatically assigns the nearest available ambulance and streams live GPS coordinates to the citizen's device.
-3. **🤖 Voice-Enabled AI Emergency Assistant:** A contextual chatbot that provides immediate, step-by-step first-aid guidance while the ambulance is en route (powered by Anthropic's Claude, with a robust offline heuristic fallback).
-4. **⏱️ ML-Powered ETA Prediction:** Uses a trained Random Forest Regressor to predict arrival times based on historical traffic patterns, distance, and time of day.
-5. **📱 Cross-Platform Accessibility:** Built as a Progressive Web App (PWA) with Capacitor integration, allowing it to be installed as a native app on mobile devices.
+1. **Intelligent Hospital Selection:** Uses a scoring algorithm that weighs geographical distance against real-time hospital resource availability (beds, specialized ICUs).
+2. **Real-Time Ambulance Dispatch & Tracking:** Automatically assigns the nearest available ambulance and streams live GPS coordinates to the citizen's device.
+3. **Voice-Enabled AI Emergency Assistant:** A contextual chatbot that provides immediate, step-by-step first-aid guidance while the ambulance is en route (powered by Anthropic's Claude, with a robust offline heuristic fallback).
+4. **ML-Powered ETA Prediction:** Uses a trained Random Forest Regressor to predict arrival times based on historical traffic patterns, distance, and time of day.
+5. **Cross-Platform Accessibility:** Built as a Progressive Web App (PWA) with Capacitor integration, allowing it to be installed as a native app on mobile devices.
 
 ---
 
-## 🧠 Machine Learning & Algorithms
+## Machine Learning & Algorithms
 
 ### 1. ETA Prediction Model
 Instead of relying on basic distance/speed formulas, the system trains a **Random Forest Regressor** using `scikit-learn` to predict ambulance arrival times.
@@ -53,7 +52,7 @@ If the cloud LLM (Anthropic) is unavailable or no API key is provided, the backe
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### **Frontend (Citizen & Driver Apps)**
 - **Framework:** React.js (Single Page Application)
@@ -72,26 +71,26 @@ If the cloud LLM (Anthropic) is unavailable or no API key is provided, the backe
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ```mermaid
 graph TD
-    A[📱 Citizen Web/Mobile App] <-->|HTTP/REST| B(🌐 Flask API Backend)
-    A <-->|WebSocket| C(⚡ Socket.IO Server)
+    A[Citizen Web/Mobile App] <-->|HTTP/REST| B(Flask API Backend)
+    A <-->|WebSocket| C(Socket.IO Server)
     
-    D[🚑 Ambulance Driver App] <-->|WebSocket| C
+    D[Ambulance Driver App] <-->|WebSocket| C
     
-    B --> E[🧠 Hospital Scoring Engine]
-    B --> F[⏱️ ML ETA Predictor]
-    B --> G[🤖 AI Chatbot / Offline Engine]
+    B --> E[Hospital Scoring Engine]
+    B --> F[ML ETA Predictor]
+    B --> G[AI Chatbot / Offline Engine]
     
-    E --> H[(🏥 In-Memory Hospital DB)]
-    F --> I[(📈 Random Forest Model .pkl)]
+    E --> H[(In-Memory Hospital DB)]
+    F --> I[(Random Forest Model .pkl)]
 ```
 
 ---
 
-## 🚀 Deployment Guide
+## Deployment Guide
 
 This project is fully configured for public deployment on modern cloud providers.
 
@@ -115,7 +114,7 @@ This project is fully configured for public deployment on modern cloud providers
 
 ---
 
-## 💻 Local Development
+## Local Development
 
 ### Prerequisites
 - Node.js (v16+)
@@ -150,5 +149,5 @@ This project is fully configured for public deployment on modern cloud providers
 
 ---
 
-## 📝 License & Disclaimer
+## License & Disclaimer
 This project was built for educational and demonstration purposes as part of an intensive hackathon/build sprint. It is **not** intended for actual medical or emergency use without rigorous real-world testing, regulatory compliance, and a persistent, highly available database architecture.
