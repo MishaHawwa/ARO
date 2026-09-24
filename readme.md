@@ -2,7 +2,6 @@
   <h1>🚨 AI-Driven Emergency & Hospital Optimization System</h1>
   <p><i>A smart, real-time emergency response platform that uses Machine Learning to optimize hospital selection, dispatch ambulances, and predict arrival times.</i></p>
 
-  [![Build Time](https://img.shields.io/badge/build%20time-4%20hours-blue)](#)
   [![Tech Stack](https://img.shields.io/badge/stack-React%20%2B%20Flask-orange)](#)
   [![Real-Time](https://img.shields.io/badge/real--time-Socket.IO-brightgreen)](#)
   [![ML](https://img.shields.io/badge/ML-scikit--learn-yellow)](#)
