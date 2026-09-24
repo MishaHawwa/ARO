@@ -1,189 +1,154 @@
-a web app (AI-DRIVEN EMERGENCY AND HOSPITAL  OPTIMIZATION SYSTEM) with the following features:
-We have 4 hours to build.
-Patient Condition Aware Routing:
+<div align="center">
+  <h1>🚨 AI-Driven Emergency & Hospital Optimization System</h1>
+  <p><i>A smart, real-time emergency response platform that uses Machine Learning to optimize hospital selection, dispatch ambulances, and predict arrival times.</i></p>
 
-This system classifies the patient based on the patient’s severity
+  [![Build Time](https://img.shields.io/badge/build%20time-4%20hours-blue)](#)
+  [![Tech Stack](https://img.shields.io/badge/stack-React%20%2B%20Flask-orange)](#)
+  [![Real-Time](https://img.shields.io/badge/real--time-Socket.IO-brightgreen)](#)
+  [![ML](https://img.shields.io/badge/ML-scikit--learn-yellow)](#)
+  [![Platform](https://img.shields.io/badge/platform-Web%20%2B%20Mobile(PWA)-purple)](#)
+</div>
 
-Hospital Readiness - Aware Destination Selection:
+---
 
-Selects hospitals based on ICU availability and required specialist , not just the nearest one.
+## 📖 Overview
 
-AI-Based ETA Prediction System:
+The **AI-Driven Emergency and Hospital Optimization System** bridges the gap between citizens in distress and emergency medical services. By leveraging Machine Learning and real-time WebSockets, this platform ensures patients are routed to the *right* hospital (based on ICU and specialist availability) rather than just the *closest* one, while predicting highly accurate ambulance ETAs.
 
-Machine learning model such as random forest is used to improve ETA accuracy compared to basic navigation system
+---
 
-Citizen Emergency Alert and Smart Dispatch:
+## ✨ Core Features
 
-When citizen triggers an emergency request :
-Route and ETA are displayed
-Hospital is notified (simulated)
-Screen 1 — Dashboard Simple emergency cards. Example:
-[ Heart Attack ]
+1. **🏥 Intelligent Hospital Selection:** Uses a scoring algorithm that weighs geographical distance against real-time hospital resource availability (beds, specialized ICUs).
+2. **🚑 Real-Time Ambulance Dispatch & Tracking:** Automatically assigns the nearest available ambulance and streams live GPS coordinates to the citizen's device.
+3. **🤖 Voice-Enabled AI Emergency Assistant:** A contextual chatbot that provides immediate, step-by-step first-aid guidance while the ambulance is en route (powered by Anthropic's Claude, with a robust offline heuristic fallback).
+4. **⏱️ ML-Powered ETA Prediction:** Uses a trained Random Forest Regressor to predict arrival times based on historical traffic patterns, distance, and time of day.
+5. **📱 Cross-Platform Accessibility:** Built as a Progressive Web App (PWA) with Capacitor integration, allowing it to be installed as a native app on mobile devices.
 
-[ Accident ]
+---
 
-[ Stroke ]
+## 🧠 Machine Learning & Algorithms
 
-[ Burns ]
+### 1. ETA Prediction Model
+Instead of relying on basic distance/speed formulas, the system trains a **Random Forest Regressor** using `scikit-learn` to predict ambulance arrival times.
+- **Features Used:** `Distance (km)`, `Traffic Factor (0.0 - 2.0)`, `Hour of Day`, `Day of Week`, `Weather Conditions`.
+- **Pipeline:** The model is trained on a generated dataset (`eta_training_data.csv`). It learns non-linear relationships, such as how rush hour traffic disproportionately affects longer routes. 
+- **Persistence:** The trained model is serialized using `joblib` (`models/eta_model.pkl`) and loaded into the Flask backend on startup.
 
-[ Pregnancy Emergency ]
-Screen 2 — Finding Best Hospital
-Animated loading:
+### 2. Hospital Recommendation Engine
+The system uses a custom scoring algorithm to evaluate hospitals:
+```python
+# Haversine formula calculates the exact spherical distance
+distance = calculate_haversine_distance(patient_loc, hospital_loc)
 
-Analyzing nearby hospitals...
-Checking ICU availability...
-Assigning ambulance...
-This creates a strong AI feel.
-Screen 3 — Emergency Tracking
-Displays:
-Top Section
+# Scoring Algorithm (Lower is better)
+score = (distance * DISTANCE_WEIGHT) + (10 - beds_available) * CAPACITY_WEIGHT
 
-Emergency Type: Heart Attack
-Severity: Critical
-Assigned Hospital: CityCare Hospital
-ETA: 8 mins
-Middle Section
-Live map:
+# Hard constraints: 
+# If a patient has a Heart Attack, hospitals without a Cardiac ICU are immediately disqualified.
+```
 
-patient marker
-ambulance marker
-hospital marker
-route line Bottom Section
-Ambulance Number: KA-01-EM-102
-Driver Status: En Route
-Hospital Prepared: YES
-Recommended Technologies
-Frontend
-React Native
-Best choice because:
+### 3. Smart First-Aid Fallback Engine
+If the cloud LLM (Anthropic) is unavailable or no API key is provided, the backend falls back to an intelligent heuristic engine that parses the user's message using Natural Language rules to extract keywords (e.g., "water", "breathing", "CPR") and returns pre-computed, medically safe first-aid instructions specific to the active emergency type.
 
-mobile-focused
-real-time support
-GPS support
-maps easy
-Backend
-Flask + Flask-SocketIO
-Handles:
+---
 
-hospital selection
-ambulance assignment
-live tracking Maps Leaflet + OpenStreetMap Free and easier for student projects. OR Google Maps API if allowed. Database MySQL Tables: hospitals | id | name | cardiac_icu | beds_available | ambulances | id | current_location | available | emergencies | id | type | patient_location | hospital_assigned | AI Components
-Hospital Recommendation Engine Initially rule-based. Later upgrade to ML.
-ETA Prediction
-Random Forest Regressor.
-Real-Time Communication
-Use:
-[Socket.IO](http://Socket.IO)
-For:
+## 🛠️ Technology Stack
 
-live ambulance movement
-emergency notifications
-status updates Simplified System Architecture
-Citizen App
-      ↓
-Flask Backend
-      ↓
-Optimization Engine
-      ↓
-Hospital Database
-      ↓
-Ambulance Assignment
-      ↓
-Socket.IO Live Tracking
-Best Development Plan
-PHASE 1 — UI + Basic Routing
-Build:
+### **Frontend (Citizen & Driver Apps)**
+- **Framework:** React.js (Single Page Application)
+- **Mobile/PWA:** Capacitor (for native wrapping), Web App Manifest, Service Workers
+- **Maps:** `react-leaflet` & OpenStreetMap (Free, open-source tile layers)
+- **Voice/Speech:** Web Speech API (Native browser Speech-to-Text & Text-to-Speech)
+- **Real-time Client:** `socket.io-client`
 
-dashboard buttons
-GPS location
-hospital selection
-map display
-PHASE 2 — Ambulance Assignment
-Build:
+### **Backend (API & Optimization Engine)**
+- **Framework:** Python / Flask
+- **Real-time Server:** `Flask-SocketIO` with `gevent` & `gevent-websocket` for asynchronous, non-blocking WebSocket connections.
+- **Machine Learning:** `scikit-learn`, `numpy`, `pandas`, `joblib`
+- **Geolocation Math:** `geopy` (Haversine distances)
+- **LLM Integration:** `anthropic` (Claude 3.5 Sonnet)
+- **Telephony Fallback:** `twilio` (Automated phone calls to drivers if they don't accept the WebSocket ping).
 
-ambulance database
-nearest ambulance finder
-PHASE 3 — Live Tracking
-Build:
+---
 
-[Socket.IO](http://Socket.IO)
-moving ambulance marker
-PHASE 4 — AI Optimization
-Build:
+## 🏗️ System Architecture
 
-ETA prediction model
-intelligent scoring
-PHASE 5 — Final Polish
-Add:
+```mermaid
+graph TD
+    A[📱 Citizen Web/Mobile App] <-->|HTTP/REST| B(🌐 Flask API Backend)
+    A <-->|WebSocket| C(⚡ Socket.IO Server)
+    
+    D[🚑 Ambulance Driver App] <-->|WebSocket| C
+    
+    B --> E[🧠 Hospital Scoring Engine]
+    B --> F[⏱️ ML ETA Predictor]
+    B --> G[🤖 AI Chatbot / Offline Engine]
+    
+    E --> H[(🏥 In-Memory Hospital DB)]
+    F --> I[(📈 Random Forest Model .pkl)]
+```
 
-animations
-analytics
-alerts
-better UI
-Smart Demo Flow
-This will impress evaluators:
+---
 
-User clicks “Stroke”
-GPS captured
-AI checks hospitals
-Closest hospital rejected (no neuro ICU)
-Better hospital selected
-Ambulance assigned automatically
-Live tracking starts
-Hospital notified
-ETA updates dynamically
-This feels like a real smart-city emergency platform.
-My Recommendation
-For a student project:
-BEST STACK
-Frontend
+## 🚀 Deployment Guide
 
-React Native
-Backend
+This project is fully configured for public deployment on modern cloud providers.
 
-Flask
-Database
+### 1. Backend (Render)
+1. Push this repository to GitHub.
+2. Create a new **Web Service** on [Render](https://render.com).
+3. Connect your repository.
+4. **Build Command:** `pip install -r backend/requirements.txt`
+5. **Start Command:** `gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 app:app`
+6. **Environment Variables:**
+   - `PYTHON_VERSION`: `3.11.4` (Critical for gevent compatibility)
+   - `ANTHROPIC_API_KEY`: *(Optional)* Your Claude API key.
+   - `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN`: *(Optional)* For phone call fallbacks.
 
-MySQL
-Real-Time
+### 2. Frontend (Vercel)
+1. Import your GitHub repository into [Vercel](https://vercel.com).
+2. The framework preset should automatically detect **Create React App**.
+3. **Environment Variables:**
+   - `REACT_APP_API_URL`: The public URL of your Render backend (e.g., `https://your-backend.onrender.com`).
+4. Click **Deploy**.
 
-[Socket.IO](http://Socket.IO)
-Maps
+---
 
-Leaflet/OpenStreetMap
-ML
+## 💻 Local Development
 
-scikit-learn Random Forest
-This combination is:
+### Prerequisites
+- Node.js (v16+)
+- Python (3.9+)
 
-realistic
-achievable
-impressive
-deployment friendly
-PRIORITY 1 (MUST HAVE)
-Emergency Dashboard
+### Setup
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/YourUsername/ARO.git
+   cd ARO
+   ```
 
-5 buttons
-Hospital Selection
+2. **Start the Backend:**
+   ```bash
+   cd backend
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   pip install -r requirements.txt
+   python app.py
+   ```
 
-nearest matching hospital
-Ambulance Assignment
+3. **Start the Frontend:**
+   ```bash
+   # In a new terminal at the project root
+   npm install
+   npm start
+   ```
 
-nearest available ambulance
-Live Map
+4. **Access the Apps:**
+   - Citizen App: `http://localhost:3000`
+   - Ambulance Driver Simulator: `http://localhost:3000/ambulance?id=KA-01-EM-101`
 
-patient
-ambulance
-hospital
-Simulated Ambulance Movement
+---
 
-moving marker
-PRIORITY 2 (ONLY IF TIME)
-AI ETA prediction
-[Socket.IO](http://Socket.IO)
-Analytics
-Skip if running out of time.
-After clicking on the emergency criteria, give an AI suggestion on what to do in that situation.. below the live tracking map
-the location tracking of the patient/user should directly be done automatically
-Give a ready to go code 
-guide with the installations
+## 📝 License & Disclaimer
+This project was built for educational and demonstration purposes as part of an intensive hackathon/build sprint. It is **not** intended for actual medical or emergency use without rigorous real-world testing, regulatory compliance, and a persistent, highly available database architecture.
