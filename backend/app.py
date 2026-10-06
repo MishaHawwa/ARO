@@ -28,106 +28,76 @@ except FileNotFoundError:
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
+import requests
+
+BACKENLY_PROJECT_ID = "01db9ccd-417e-457e-8073-e7bccdca3e63"
+BACKENLY_API_KEY = "mcp_live_e4f31a5ba831021aacad4259d5f05cf0613e7f1a67372b06086ac27cb1b83ab2"
+BACKENLY_BASE_URL = f"https://backenly.com/api/v1/{BACKENLY_PROJECT_ID}/db"
+HEADERS = {"x-api-key": BACKENLY_API_KEY}
+
+def fetch_hospitals():
+    res = requests.get(f"{BACKENLY_BASE_URL}/hospitals", headers=HEADERS)
+    if res.status_code != 200:
+        print("Failed to fetch hospitals:", res.text)
+        return []
+    data = res.json()
+    if isinstance(data, dict):
+        data = data.get("data", data)
+    
+    formatted_hospitals = []
+    for h in data:
+        specs = ["general_physician"]
+        if h.get("cardiac_icu"): specs.append("cardiologist")
+        if h.get("neuro_icu"): specs.append("neurologist")
+        if h.get("burn_unit"): specs.append("burn")
+        if h.get("maternity_ward"): specs.append("obstetrician")
+        if h.get("trauma_center"): 
+            specs.append("trauma")
+            specs.append("pediatrician")
+            
+        formatted_hospitals.append({
+            "id": h.get("id"),
+            "name": h.get("name"),
+            "location": {"lat": h.get("location_lat"), "lng": h.get("location_lng")},
+            "cardiac_icu": h.get("cardiac_icu", False),
+            "neuro_icu": h.get("neuro_icu", False),
+            "trauma_center": h.get("trauma_center", False),
+            "burn_unit": h.get("burn_unit", False),
+            "maternity_ward": h.get("maternity_ward", False),
+            "beds_available": h.get("beds_available", 0),
+            "specialists": specs
+        })
+    return formatted_hospitals
+
+def fetch_ambulances():
+    res = requests.get(f"{BACKENLY_BASE_URL}/ambulances", headers=HEADERS)
+    if res.status_code != 200:
+        return []
+    data = res.json()
+    if isinstance(data, dict):
+        data = data.get("data", data)
+    
+    formatted_ambulances = []
+    for a in data:
+        formatted_ambulances.append({
+            "id": a.get("id"),
+            "location": {"lat": a.get("location_lat"), "lng": a.get("location_lng")},
+            "available": a.get("available", False),
+            "phone": a.get("phone", ""),
+            "driver_status": a.get("driver_status", ""),
+            "current_emergency_id": a.get("current_emergency_id", "")
+        })
+    return formatted_ambulances
+
+def update_ambulance_status(amb_id, updates):
+    requests.patch(f"{BACKENLY_BASE_URL}/ambulances?id=eq.{amb_id}", json=updates, headers=HEADERS)
+
 
 # Bhatkal Hospital Database - Real hospitals with accurate locations and facilities
-hospitals = [
-    {
-        "id": 1,
-        "name": "Bhatkal Government Hospital",
-        "location": {"lat": 13.9667, "lng": 74.5667},  # Main government hospital
-        "cardiac_icu": False,
-        "neuro_icu": False,
-        "trauma_center": True,
-        "burn_unit": False,
-        "maternity_ward": True,
-        "beds_available": 45,
-        "specialists": ["general_physician", "trauma", "obstetrician", "pediatrician"]
-    },
-    {
-        "id": 2,
-        "name": "Peace Hospital Bhatkal",
-        "location": {"lat": 13.9645, "lng": 74.5645},  # Private hospital near market
-        "cardiac_icu": True,
-        "neuro_icu": False,
-        "trauma_center": True,
-        "burn_unit": True,
-        "maternity_ward": True,
-        "beds_available": 25,
-        "specialists": ["cardiologist", "trauma", "burn", "obstetrician", "general_physician"]
-    },
-    {
-        "id": 3,
-        "name": "Al-Shifa Hospital",
-        "location": {"lat": 13.9678, "lng": 74.5689},  # Near bus stand
-        "cardiac_icu": False,
-        "neuro_icu": False,
-        "trauma_center": True,
-        "burn_unit": False,
-        "maternity_ward": True,
-        "beds_available": 20,
-        "specialists": ["general_physician", "trauma", "obstetrician"]
-    },
-    {
-        "id": 4,
-        "name": "Bhatkal Taluk Hospital",
-        "location": {"lat": 13.9712, "lng": 74.5634},  # Taluk hospital
-        "cardiac_icu": False,
-        "neuro_icu": False,
-        "trauma_center": True,
-        "burn_unit": True,
-        "maternity_ward": True,
-        "beds_available": 35,
-        "specialists": ["general_physician", "trauma", "burn", "obstetrician", "pediatrician"]
-    },
-    {
-        "id": 5,
-        "name": "Navayuga Hospital",
-        "location": {"lat": 13.9634, "lng": 74.5612},  # Private clinic
-        "cardiac_icu": False,
-        "neuro_icu": False,
-        "trauma_center": False,
-        "burn_unit": False,
-        "maternity_ward": True,
-        "beds_available": 12,
-        "specialists": ["general_physician", "obstetrician"]
-    },
-    {
-        "id": 6,
-        "name": "Murdeshwar Hospital",
-        "location": {"lat": 14.0942, "lng": 74.4847},  # Nearby Murdeshwar (15km)
-        "cardiac_icu": True,
-        "neuro_icu": True,
-        "trauma_center": True,
-        "burn_unit": True,
-        "maternity_ward": True,
-        "beds_available": 40,
-        "specialists": ["cardiologist", "neurologist", "trauma", "burn", "obstetrician"]
-    },
-    {
-        "id": 7,
-        "name": "Kundapur Government Hospital",
-        "location": {"lat": 13.6167, "lng": 74.6833},  # Kundapur (40km south)
-        "cardiac_icu": True,
-        "neuro_icu": False,
-        "trauma_center": True,
-        "burn_unit": True,
-        "maternity_ward": True,
-        "beds_available": 50,
-        "specialists": ["cardiologist", "trauma", "burn", "obstetrician", "general_physician"]
-    }
-]
+hospitals = fetch_hospitals()
 
 # Bhatkal Ambulance Database - Strategic locations for minimal response time
-ambulances = [
-    {"id": "KA-19-EM-001", "location": {"lat": 13.9667, "lng": 74.5667}, "available": True, "phone": "+910000000001"},  # Government Hospital
-    {"id": "KA-19-EM-002", "location": {"lat": 13.9645, "lng": 74.5645}, "available": True, "phone": "+910000000002"},  # Peace Hospital
-    {"id": "KA-19-EM-003", "location": {"lat": 13.9678, "lng": 74.5689}, "available": True, "phone": "+910000000003"},  # Al-Shifa Hospital
-    {"id": "KA-19-EM-004", "location": {"lat": 13.9712, "lng": 74.5634}, "available": True, "phone": "+910000000004"},  # Taluk Hospital
-    {"id": "KA-19-EM-005", "location": {"lat": 13.9650, "lng": 74.5650}, "available": True, "phone": "+910000000005"},  # Central Bhatkal
-    {"id": "KA-19-EM-006", "location": {"lat": 13.9680, "lng": 74.5620}, "available": True, "phone": "+910000000006"},  # Market area
-    {"id": "KA-19-EM-007", "location": {"lat": 13.9640, "lng": 74.5680}, "available": True, "phone": "+910000000007"},  # Residential area
-    {"id": "KA-19-EM-008", "location": {"lat": 14.0942, "lng": 74.4847}, "available": True, "phone": "+910000000008"}   # Murdeshwar backup
-]
+ambulances = fetch_ambulances()
 
 # NOTE on real hospital/ambulance data:
 # The records above are still placeholders for the Bhatkal demo. See
@@ -622,6 +592,7 @@ def handle_emergency():
     
     # Find best hospital
     suitable_hospitals = []
+    hospitals = fetch_hospitals()
     for hospital in hospitals:
         score = score_hospital(hospital, emergency_type, patient_location)
         if score >= 0:  # Hospital is suitable
@@ -651,6 +622,7 @@ def handle_emergency():
         s['assigned'] = (s['hospital_id'] == best_hospital['id'])
     
     # Find nearest available ambulance
+    ambulances = fetch_ambulances()
     available_ambulances = [a for a in ambulances if a['available']]
     if not available_ambulances:
         return jsonify({'error': 'No ambulance available'}), 404
@@ -665,6 +637,12 @@ def handle_emergency():
     emergency_id = f"EMG-{int(time.time())}"
     nearest_ambulance['current_emergency_id'] = emergency_id
     nearest_ambulance['driver_status'] = 'notified'
+    
+    update_ambulance_status(nearest_ambulance['id'], {
+        'available': False,
+        'current_emergency_id': emergency_id,
+        'driver_status': 'notified'
+    })
     
     # Calculate ETA with realistic factors for Bhatkal
     distance_to_patient = calculate_distance(nearest_ambulance['location'], patient_location)
@@ -805,8 +783,6 @@ def handle_tracking(data):
 # environment variables to enable step 2; it's skipped (logged only) if
 # they're not set, so the app still works without a Twilio account.
 
-RESPONSE_TIMEOUT_SECONDS = 25
-
 try:
     from twilio.rest import Client as TwilioClient
     TWILIO_SID = os.environ.get('TWILIO_ACCOUNT_SID')
@@ -816,33 +792,29 @@ try:
 except Exception as e:
     twilio_client = None
 
-
 def call_ambulance_fallback(ambulance, response):
-    """Places an automated call to the driver reading out the job, used only
-    if the Socket.IO push wasn't acknowledged in time. Requires a Twilio
-    account (see the env vars above) and a real phone number on the
-    ambulance record."""
+    """Places an automated call to the driver reading out the job."""
+    # User requested to mock this by calling their number: +919110853440
+    target_number = "+919110853440" # Mock number requested by user
+    
     if twilio_client is None:
-        print(f"[Ambulance Fallback] Twilio not configured - would have called "
-              f"{ambulance.get('phone')} for {response['emergency_id']}")
+        print(f"[Ambulance Call Mock] Twilio not configured - would have called "
+              f"{target_number} (Driver: {ambulance.get('id')}) for {response['emergency_id']}")
         return
-    twiml = (f"<Response><Say>New emergency assignment. "
-              f"{response['emergency_type']}, severity {response['severity']}. "
-              f"Please open your driver app to accept.</Say></Response>")
+        
+    twiml = (f"<Response><Say>There is a medical emergency. There is a medical emergency. There is a medical emergency.</Say></Response>")
     try:
         twilio_client.calls.create(
             twiml=twiml,
-            to=ambulance['phone'],
+            to=target_number,
             from_=TWILIO_FROM,
         )
-        print(f"[Ambulance Fallback] Called {ambulance['phone']}")
+        print(f"[Ambulance Call] Called {target_number}")
     except Exception as e:
-        print(f"[Ambulance Fallback] Twilio call failed: {e}")
-
+        print(f"[Ambulance Call] Twilio call failed: {e}")
 
 def notify_ambulance(ambulance, response):
-    """Push the new job to the driver app in real time, and arm the call
-    fallback in case nobody acknowledges it."""
+    """Push the new job to the driver app in real time, and immediately call."""
     job_payload = {
         'emergency_id': response['emergency_id'],
         'emergency_type': response['emergency_type'],
@@ -854,51 +826,79 @@ def notify_ambulance(ambulance, response):
     socketio.emit('new_assignment', job_payload, room=f"ambulance_{ambulance['id']}")
     print(f"[Ambulance] Notified {ambulance['id']} of {response['emergency_id']}")
 
-    def arm_fallback():
-        socketio.sleep(RESPONSE_TIMEOUT_SECONDS)
-        # Re-fetch current state - the driver may have accepted by now.
-        current = next((a for a in ambulances if a['id'] == ambulance['id']), None)
-        if current and current.get('driver_status') == 'notified':
-            call_ambulance_fallback(current, response)
+    # Call immediately as requested
+    def make_call():
+        call_ambulance_fallback(ambulance, response)
 
-    socketio.start_background_task(arm_fallback)
-
+    socketio.start_background_task(make_call)
 
 @socketio.on('join_ambulance')
 def handle_join_ambulance(data):
-    """The ambulance driver app calls this right after connecting so it can
-    receive 'new_assignment' events addressed to it specifically."""
     ambulance_id = data.get('ambulance_id')
     if ambulance_id:
         join_room(f"ambulance_{ambulance_id}")
         emit('joined', {'ambulance_id': ambulance_id})
 
-
 @app.route('/api/ambulance/<ambulance_id>/respond', methods=['POST'])
 def ambulance_respond(ambulance_id):
-    """Driver taps Accept/Decline in the driver app."""
     data = request.json or {}
     accepted = data.get('accepted', True)
+    emergency_id = data.get('emergency_id')
+    
+    ambulances = fetch_ambulances()
     ambulance = next((a for a in ambulances if a['id'] == ambulance_id), None)
     if not ambulance:
         return jsonify({'error': 'Unknown ambulance'}), 404
 
     if accepted:
-        ambulance['driver_status'] = 'accepted'
+        update_ambulance_status(ambulance_id, {'driver_status': 'accepted'})
         socketio.emit('driver_responded', {
             'ambulance_id': ambulance_id,
-            'emergency_id': ambulance.get('current_emergency_id'),
+            'emergency_id': emergency_id,
             'status': 'accepted',
         })
+        return jsonify({'ok': True, 'status': 'accepted'})
     else:
-        # Free the ambulance back up; in production you'd re-run hospital/
-        # ambulance assignment here to find the next-best option.
-        ambulance['available'] = True
-        ambulance['driver_status'] = 'declined'
-        ambulance['current_emergency_id'] = None
-
-    return jsonify({'ok': True, 'status': ambulance['driver_status']})
-
+        # Rejected! Free up this ambulance
+        update_ambulance_status(ambulance_id, {
+            'available': True,
+            'driver_status': 'declined',
+            'current_emergency_id': None
+        })
+        
+        # Find next nearest ambulance
+        ambulances = fetch_ambulances() # Refresh
+        available_ambulances = [a for a in ambulances if a['available']]
+        if not available_ambulances:
+            return jsonify({'error': 'No other ambulance available'}), 404
+            
+        patient_location = data.get('patient_location', {'lat': 13.96, 'lng': 74.56}) # Fallback if not provided
+        
+        nearest_ambulance = min(
+            available_ambulances,
+            key=lambda a: geodesic((patient_location['lat'], patient_location['lng']), (a['location']['lat'], a['location']['lng'])).km
+        )
+        
+        # Mark new ambulance as unavailable
+        update_ambulance_status(nearest_ambulance['id'], {
+            'available': False,
+            'current_emergency_id': emergency_id,
+            'driver_status': 'notified'
+        })
+        
+        # Construct a response object for the notification (we use existing data or mock for now)
+        response_data = {
+            'emergency_id': emergency_id,
+            'emergency_type': data.get('emergency_type', 'Emergency'),
+            'severity': data.get('severity', 'High'),
+            'patient_location': patient_location,
+            'hospital': data.get('hospital', {}),
+            'eta': data.get('eta', 10)
+        }
+        
+        notify_ambulance(nearest_ambulance, response_data)
+        
+        return jsonify({'ok': True, 'status': 'declined', 'next_ambulance': nearest_ambulance['id']})
 
 @app.route('/api/ambulance/<ambulance_id>/status', methods=['POST'])
 def ambulance_status(ambulance_id):
