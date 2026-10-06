@@ -124,7 +124,20 @@ def fetch_ambulances():
     return formatted_ambulances
 
 def update_ambulance_status(amb_id, updates):
-    requests.patch(f"{BACKENLY_BASE_URL}/ambulances?id=eq.{amb_id}", json=updates, headers=HEADERS)
+    import urllib.request
+    import json
+    import ssl
+    
+    req = urllib.request.Request(f"{BACKENLY_BASE_URL}/ambulances?id=eq.{amb_id}", method="PATCH")
+    req.add_header('x-api-key', BACKENLY_API_KEY)
+    req.add_header('Content-Type', 'application/json')
+    data = json.dumps(updates).encode('utf-8')
+    
+    try:
+        ctx = ssl._create_unverified_context()
+        urllib.request.urlopen(req, data=data, context=ctx)
+    except Exception as e:
+        print("Error updating ambulance:", e)
 
 
 # Bhatkal Hospital Database - Real hospitals with accurate locations and facilities
