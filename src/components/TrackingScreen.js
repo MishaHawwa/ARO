@@ -34,6 +34,13 @@ const hospitalIcon = new L.Icon({
   iconAnchor: [16, 32],
 });
 
+const formatAmbulanceAlias = (uuid) => {
+  if (!uuid) return '';
+  const part1 = uuid.substring(0, 4).toUpperCase();
+  const part2 = uuid.substring(4, 6).toUpperCase();
+  return `KA-${part1}-${part2}`;
+};
+
 function TrackingScreen({ data, onBack }) {
   const [ambulanceLocation, setAmbulanceLocation] = useState(data.ambulance.location);
   const [ambulanceStatus, setAmbulanceStatus] = useState('En Route');
@@ -136,7 +143,7 @@ function TrackingScreen({ data, onBack }) {
             <div className="detail-icon">🚑</div>
             <div className="detail-content">
               <div className="detail-label">Ambulance Number</div>
-              <div className="detail-value">{data.ambulance.id}</div>
+              <div className="detail-value">{formatAmbulanceAlias(data.ambulance.id)}</div>
             </div>
           </div>
           <div className="detail-card">
