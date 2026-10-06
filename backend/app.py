@@ -42,11 +42,25 @@ BACKENLY_BASE_URL = f"https://backenly.com/api/v1/{BACKENLY_PROJECT_ID}/db"
 HEADERS = {"x-api-key": BACKENLY_API_KEY}
 
 def fetch_hospitals():
-    res = requests.get(f"{BACKENLY_BASE_URL}/hospitals", headers=HEADERS)
-    if res.status_code != 200:
-        print("Failed to fetch hospitals:", res.text)
+    import urllib.request
+    import json
+    import ssl
+    
+    req = urllib.request.Request(f"{BACKENLY_BASE_URL}/hospitals", method="GET")
+    req.add_header('x-api-key', BACKENLY_API_KEY)
+    
+    try:
+        # Create unverified context to avoid SSL gevent recursion bugs
+        ctx = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, context=ctx) as res:
+            if res.status != 200:
+                return []
+            body = res.read().decode('utf-8')
+            data = json.loads(body)
+    except Exception as e:
+        print("Failed to fetch hospitals:", e)
         return []
-    data = res.json()
+    
     if isinstance(data, dict):
         data = data.get("data", data)
     
@@ -76,10 +90,24 @@ def fetch_hospitals():
     return formatted_hospitals
 
 def fetch_ambulances():
-    res = requests.get(f"{BACKENLY_BASE_URL}/ambulances", headers=HEADERS)
-    if res.status_code != 200:
+    import urllib.request
+    import json
+    import ssl
+    
+    req = urllib.request.Request(f"{BACKENLY_BASE_URL}/ambulances", method="GET")
+    req.add_header('x-api-key', BACKENLY_API_KEY)
+    
+    try:
+        ctx = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, context=ctx) as res:
+            if res.status != 200:
+                return []
+            body = res.read().decode('utf-8')
+            data = json.loads(body)
+    except Exception as e:
+        print("Error fetching ambulances:", e)
         return []
-    data = res.json()
+    
     if isinstance(data, dict):
         data = data.get("data", data)
     
