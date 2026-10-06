@@ -59,6 +59,11 @@ function CitizenApp() {
       })
         .then(response => response.json())
         .then(data => {
+          if (data.error) {
+            alert(data.error);
+            setScreen('dashboard');
+            return;
+          }
           setEmergencyData(data);
           setScreen('tracking');
         })
