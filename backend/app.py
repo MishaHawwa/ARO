@@ -26,6 +26,12 @@ except FileNotFoundError:
           "Run `python train_eta_model.py` to train one.")
 
 app = Flask(__name__)
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    return jsonify({"error": "Internal Server Error", "traceback": traceback.format_exc()}), 500
+
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 import requests
