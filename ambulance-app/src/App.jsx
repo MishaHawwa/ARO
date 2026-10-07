@@ -138,7 +138,7 @@ export default function App() {
   if (!isLoggedIn) {
     return (
       <div style={{ padding: 40, fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", background: '#f5f5f7', color: '#333', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <h1 style={{ fontSize: '2.5rem', marginBottom: '10px', color: '#d32f2f' }}>Emergency System</h1>
+        <h1 style={{ fontSize: '2.5rem', marginBottom: '30px', color: '#d32f2f' }}>Emergency System</h1>
         <h2 style={{ fontSize: '1.5rem', fontWeight: 400, color: '#666', marginBottom: '40px' }}>Driver Portal</h2>
         
         <div style={{ background: 'white', padding: '40px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
@@ -157,12 +157,20 @@ export default function App() {
     <div style={{ fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", height: '100vh', display: 'flex', flexDirection: 'column', background: '#f5f5f7', color: '#333' }}>
       <div style={{ padding: '15px 20px', background: 'white', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
         <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#666' }}>Vehicle: <span style={{ color: '#d32f2f', fontWeight: 'bold' }}>{formatAmbulanceAlias(ambulanceId)}</span></h2>
-        <div>{renderStatusBadge()}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          {renderStatusBadge()}
+          <button 
+            onClick={() => setIsLoggedIn(false)} 
+            style={{ padding: '6px 14px', background: '#f5f5f7', color: '#555', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+          >
+            End Shift
+          </button>
+        </div>
       </div>
 
       {status === 'idle' && (
         <div style={{ padding: 40, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-          <div style={{ fontSize: '4rem', marginBottom: '20px' }}>📡</div>
+          <div style={{ fontSize: '4rem', marginBottom: '40px' }}>📡</div>
           <h3 style={{ fontSize: '1.5rem', margin: '0 0 10px 0', color: '#333' }}>Waiting for dispatch...</h3>
           <p style={{ color: '#666', maxWidth: '300px', lineHeight: '1.5' }}>You are currently marked as available and will be notified of nearby emergencies.</p>
         </div>
