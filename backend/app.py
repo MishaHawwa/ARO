@@ -889,6 +889,13 @@ def handle_join_ambulance(data):
         join_room(f"ambulance_{ambulance_id}")
         emit('joined', {'ambulance_id': ambulance_id})
 
+@socketio.on('join_hospital')
+def handle_join_hospital(data):
+    hospital_id = data.get('hospital_id')
+    if hospital_id:
+        join_room(f"hospital_{hospital_id}")
+        emit('joined', {'hospital_id': hospital_id})
+
 @app.route('/api/ambulance/<ambulance_id>/respond', methods=['POST'])
 def ambulance_respond(ambulance_id):
     data = request.json or {}
