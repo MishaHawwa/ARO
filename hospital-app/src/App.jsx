@@ -78,7 +78,7 @@ export default function App() {
         <div style={{ background: 'white', padding: '40px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
           <label style={{ display: 'block', marginBottom: '10px', color: '#555', fontWeight: 'bold' }}>Facility ID:</label>
           <div style={{ padding: '15px', fontSize: 18, marginBottom: 30, background: '#f9f9f9', color: '#333', border: '1px solid #ddd', borderRadius: '8px', textAlign: 'center', fontWeight: 'bold' }}>
-            Peace Hospital Bhatkal
+            Lifecare Hospital
           </div>
           <button onClick={() => setIsLoggedIn(true)} style={{ width: '100%', padding: '15px', fontSize: 18, background: '#d32f2f', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(211, 47, 47, 0.3)' }}>
             Open Dashboard
@@ -91,7 +91,7 @@ export default function App() {
   return (
     <div style={{ fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f5f5f7', color: '#333' }}>
       <div style={{ padding: '15px 20px', background: 'white', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 1000 }}>
-        <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#666' }}>Facility: <span style={{ color: '#d32f2f', fontWeight: 'bold' }}>Peace Hospital</span></h2>
+        <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#666' }}>Facility: <span style={{ color: '#d32f2f', fontWeight: 'bold' }}>Lifecare Hospital</span></h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '6px 14px', borderRadius: 20, fontSize: 14, fontWeight: 'bold' }}>Accepting Patients</span>
           <button onClick={() => setIsLoggedIn(false)} style={{ padding: '6px 14px', background: '#f5f5f7', color: '#555', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>Log Out</button>
