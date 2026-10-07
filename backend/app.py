@@ -816,42 +816,50 @@ def handle_tracking(data):
 # environment variables to enable step 2; it's skipped (logged only) if
 # they're not set, so the app still works without a Twilio account.
 
-try:
-    from twilio.rest import Client as TwilioClient
-    TWILIO_SID = os.environ.get('TWILIO_ACCOUNT_SID')
-    TWILIO_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-    TWILIO_FROM = os.environ.get('TWILIO_FROM_NUMBER') or os.environ.get('TWILIO_PHONE_NUMBER') or os.environ.get('TWILIO_NUMBER')
-    
-    # Log configuration explicitly for debugging
-    print(f"[TWILIO CONFIG] SID={bool(TWILIO_SID)} TOKEN={bool(TWILIO_TOKEN)} FROM={TWILIO_FROM}")
-    
-    twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if (TWILIO_SID and TWILIO_TOKEN) else None
-except Exception as e:
-    print(f"[TWILIO ERROR] Could not init twilio client: {e}")
-    twilio_client = None
+import urllib.request
+import urllib.parse
+import base64
+
+TWILIO_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+TWILIO_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+TWILIO_FROM = os.environ.get('TWILIO_FROM_NUMBER') or os.environ.get('TWILIO_PHONE_NUMBER') or os.environ.get('TWILIO_NUMBER')
+
+print(f"[TWILIO CONFIG] SID={bool(TWILIO_SID)} TOKEN={bool(TWILIO_TOKEN)} FROM={TWILIO_FROM}")
+
 
 def call_ambulance_fallback(ambulance, response):
     """Places an automated call to the driver reading out the job."""
     # User requested to mock this by calling their number: +919110853440
     target_number = "+919110853440" # Mock number requested by user
     
-    if twilio_client is None:
-        print(f"[Ambulance Call Mock] Twilio not configured - would have called "
-              f"{target_number} (Driver: {ambulance.get('id')}) for {response['emergency_id']}")
+    if not TWILIO_SID or not TWILIO_TOKEN:
+        print(f"[Ambulance Call Mock] Twilio not configured - would have called {target_number}")
         return
         
     if not TWILIO_FROM:
-        print(f"[Ambulance Call] ERROR: Twilio From Number is missing! Check TWILIO_FROM_NUMBER or TWILIO_PHONE_NUMBER env vars!")
+        print(f"[Ambulance Call] ERROR: Twilio From Number is missing!")
         return
         
-    twiml = (f"<Response><Say>There is a medical emergency. There is a medical emergency. There is a medical emergency.</Say></Response>")
+    twiml = "<Response><Say>There is a medical emergency. There is a medical emergency. There is a medical emergency.</Say></Response>"
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Calls.json"
+    data = urllib.parse.urlencode({
+        'To': target_number,
+        'From': TWILIO_FROM,
+        'Twiml': twiml
+    }).encode('utf-8')
+    
+    auth_string = f"{TWILIO_SID}:{TWILIO_TOKEN}"
+    auth_base64 = base64.b64encode(auth_string.encode('ascii')).decode('ascii')
+    
+    req = urllib.request.Request(url, data=data, method='POST')
+    req.add_header("Authorization", f"Basic {auth_base64}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    
     try:
-        twilio_client.calls.create(
-            twiml=twiml,
-            to=target_number,
-            from_=TWILIO_FROM,
-        )
-        print(f"[Ambulance Call] Called {target_number}")
+        import ssl
+        ctx = ssl._create_unverified_context()
+        res = urllib.request.urlopen(req, context=ctx)
+        print(f"[Ambulance Call] Success: {res.read().decode('utf-8')}")
     except Exception as e:
         print(f"[Ambulance Call] Twilio call failed: {e}")
 
