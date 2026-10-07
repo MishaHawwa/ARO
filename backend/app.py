@@ -818,9 +818,14 @@ try:
     from twilio.rest import Client as TwilioClient
     TWILIO_SID = os.environ.get('TWILIO_ACCOUNT_SID')
     TWILIO_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-    TWILIO_FROM = os.environ.get('TWILIO_FROM_NUMBER')
+    TWILIO_FROM = os.environ.get('TWILIO_FROM_NUMBER') or os.environ.get('TWILIO_PHONE_NUMBER') or os.environ.get('TWILIO_NUMBER')
+    
+    # Log configuration explicitly for debugging
+    print(f"[TWILIO CONFIG] SID={bool(TWILIO_SID)} TOKEN={bool(TWILIO_TOKEN)} FROM={TWILIO_FROM}")
+    
     twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if (TWILIO_SID and TWILIO_TOKEN) else None
 except Exception as e:
+    print(f"[TWILIO ERROR] Could not init twilio client: {e}")
     twilio_client = None
 
 def call_ambulance_fallback(ambulance, response):
@@ -831,6 +836,10 @@ def call_ambulance_fallback(ambulance, response):
     if twilio_client is None:
         print(f"[Ambulance Call Mock] Twilio not configured - would have called "
               f"{target_number} (Driver: {ambulance.get('id')}) for {response['emergency_id']}")
+        return
+        
+    if not TWILIO_FROM:
+        print(f"[Ambulance Call] ERROR: Twilio From Number is missing! Check TWILIO_FROM_NUMBER or TWILIO_PHONE_NUMBER env vars!")
         return
         
     twiml = (f"<Response><Say>There is a medical emergency. There is a medical emergency. There is a medical emergency.</Say></Response>")
