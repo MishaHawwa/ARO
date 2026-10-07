@@ -728,13 +728,7 @@ def handle_emergency():
         'distance': round(distance_to_hospital, 2),
         'ai_suggestions': suggestions,
         'hospital_scores': hospital_scores,
-        'rejected_hospitals': [
-            {
-                'name': h['hospital']['name'],
-                'reason': 'Missing required facility or specialist'
-            }
-            for h in suitable_hospitals[1:3]
-        ] if len(suitable_hospitals) > 1 else []
+        'rejected_hospitals': []
     }
 
     # Notify the ambulance driver app in real time. The driver's app joins
