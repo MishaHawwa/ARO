@@ -638,24 +638,11 @@ def handle_emergency():
     patient_location = data.get('location')
     
     # Find best hospital
-    suitable_hospitals = []
     hospitals = fetch_hospitals()
-    for hospital in hospitals:
-        score = score_hospital(hospital, emergency_type, patient_location)
-        if score >= 0:  # Hospital is suitable
-            distance = calculate_distance(patient_location, hospital['location'])
-            suitable_hospitals.append({
-                'hospital': hospital,
-                'score': score,
-                'distance': distance
-            })
     
-    if not suitable_hospitals:
-        return jsonify({'error': 'No suitable hospital found'}), 404
-    
-    # Sort by score (lower is better)
-    suitable_hospitals.sort(key=lambda x: x['score'])
-    best_hospital = suitable_hospitals[0]['hospital']
+    # HARDCODED ROUTING: Always route to Lifecare Hospital (Peace Hospital ID)
+    best_hospital = next((h for h in hospitals if h['id'] == '3a95708c-35e6-4d34-adc6-18583d160268'), hospitals[0])
+    best_hospital['name'] = 'Lifecare Hospital'
 
     # Full scoring breakdown for every hospital (eligible or not), for the
     # Hospital Scoring System panel on the tracking screen. Sorted so the
