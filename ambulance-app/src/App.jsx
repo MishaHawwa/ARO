@@ -84,21 +84,33 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setMyLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        (error) => {
-          console.error("GPS error:", error);
-          setMyLocation({ lat: 12.8725, lng: 74.8440 });
-        },
-        { enableHighAccuracy: true }
-      );
-    }
+    if (!navigator.geolocation) return;
+
+    // Fast initial fix (<50ms) using cell/WiFi cache
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setMyLocation({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        });
+      },
+      (err) => console.warn("Fast GPS warning:", err),
+      { enableHighAccuracy: false, timeout: 2000, maximumAge: 60000 }
+    );
+
+    // Continuous real-time GPS streaming without blocking
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setMyLocation({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        });
+      },
+      (err) => console.warn("Watch GPS error:", err),
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 5000 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
   useEffect(() => {

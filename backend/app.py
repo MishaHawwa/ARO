@@ -169,7 +169,13 @@ DEFAULT_AMBULANCES = [
     }
 ]
 
-def fetch_hospitals():
+_hospitals_cache = {"data": None, "time": 0}
+def fetch_hospitals(force_refresh=False):
+    global _hospitals_cache
+    now = time.time()
+    if not force_refresh and _hospitals_cache["data"] and (now - _hospitals_cache["time"] < 60):
+        return _hospitals_cache["data"]
+
     import urllib.request
     import json
     import ssl
@@ -179,9 +185,8 @@ def fetch_hospitals():
     
     data = []
     try:
-        # Create unverified context to avoid SSL gevent recursion bugs
         ctx = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=ctx) as res:
+        with urllib.request.urlopen(req, context=ctx, timeout=3.0) as res:
             if res.status == 200:
                 body = res.read().decode('utf-8')
                 data = json.loads(body)
@@ -215,9 +220,18 @@ def fetch_hospitals():
                 "beds_available": h.get("beds_available", 0),
                 "specialists": specs
             })
-    return formatted_hospitals if formatted_hospitals else DEFAULT_HOSPITALS
+    result = formatted_hospitals if formatted_hospitals else DEFAULT_HOSPITALS
+    _hospitals_cache["data"] = result
+    _hospitals_cache["time"] = now
+    return result
 
-def fetch_ambulances():
+_ambulances_cache = {"data": None, "time": 0}
+def fetch_ambulances(force_refresh=False):
+    global _ambulances_cache
+    now = time.time()
+    if not force_refresh and _ambulances_cache["data"] and (now - _ambulances_cache["time"] < 5):
+        return _ambulances_cache["data"]
+
     import urllib.request
     import json
     import ssl
@@ -228,7 +242,7 @@ def fetch_ambulances():
     data = []
     try:
         ctx = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=ctx) as res:
+        with urllib.request.urlopen(req, context=ctx, timeout=3.0) as res:
             if res.status == 200:
                 body = res.read().decode('utf-8')
                 data = json.loads(body)
@@ -249,9 +263,14 @@ def fetch_ambulances():
                 "driver_status": a.get("driver_status", ""),
                 "current_emergency_id": a.get("current_emergency_id", "")
             })
-    return formatted_ambulances if formatted_ambulances else DEFAULT_AMBULANCES
+    result = formatted_ambulances if formatted_ambulances else DEFAULT_AMBULANCES
+    _ambulances_cache["data"] = result
+    _ambulances_cache["time"] = now
+    return result
 
 def update_ambulance_status(amb_id, updates):
+    global _ambulances_cache
+    _ambulances_cache["time"] = 0  # Invalidate ambulance cache
     import urllib.request
     import json
     import ssl
@@ -263,7 +282,7 @@ def update_ambulance_status(amb_id, updates):
     
     try:
         ctx = ssl._create_unverified_context()
-        urllib.request.urlopen(req, data=data, context=ctx)
+        urllib.request.urlopen(req, data=data, context=ctx, timeout=3.0)
     except Exception as e:
         print("Error updating ambulance:", e)
 
@@ -761,9 +780,11 @@ def score_hospital(hospital, emergency_type, patient_location):
 
 @app.route('/api/emergency', methods=['POST'])
 def handle_emergency():
-    data = request.json
-    emergency_type = data.get('type')
+    data = request.json or {}
+    emergency_type = data.get('type', 'General Medical')
     patient_location = data.get('location')
+    if not patient_location or not isinstance(patient_location, dict) or 'lat' not in patient_location or 'lng' not in patient_location:
+        patient_location = {'lat': 12.8725, 'lng': 74.8440}
     
     # Find best hospital
     hospitals = fetch_hospitals()
@@ -884,20 +905,26 @@ def get_hospitals():
 def get_ambulances():
     return jsonify(fetch_ambulances())
 
+_osrm_cache = {}
 def fetch_osrm_route(start_loc, end_loc):
-    """Fetches real road geometry from OSRM for dynamic turn-by-turn simulation."""
+    """Fetches real road geometry from OSRM with in-memory caching and fast 1.2s timeout."""
+    cache_key = f"{round(start_loc['lat'], 4)},{round(start_loc['lng'], 4)}->{round(end_loc['lat'], 4)},{round(end_loc['lng'], 4)}"
+    if cache_key in _osrm_cache:
+        return _osrm_cache[cache_key]
     try:
         url = f"https://router.project-osrm.org/route/v1/driving/{start_loc['lng']},{start_loc['lat']};{end_loc['lng']},{end_loc['lat']}?overview=full&geometries=geojson"
         req = urllib.request.Request(url, headers={'User-Agent': 'EmergencyApp/1.0'})
-        with urllib.request.urlopen(req, timeout=3.5) as resp:
+        with urllib.request.urlopen(req, timeout=1.2) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             if data.get('routes') and len(data['routes']) > 0:
                 coords = data['routes'][0]['geometry']['coordinates']
                 dist_m = data['routes'][0].get('distance', 0)
                 dur_s = data['routes'][0].get('duration', 0)
-                return [{'lat': c[1], 'lng': c[0]} for c in coords], dist_m, dur_s
+                result = ([{'lat': c[1], 'lng': c[0]} for c in coords], dist_m, dur_s)
+                _osrm_cache[cache_key] = result
+                return result
     except Exception as e:
-        print(f"[OSRM Route] Falling back to direct line: {e}")
+        print(f"[OSRM Route Fast Fallback]: {e}")
     return None, None, None
 
 # WebSocket for live tracking
@@ -927,6 +954,17 @@ def handle_tracking(data):
             }
             dist_amb_to_pat = calculate_distance(ambulance_location, patient_location)
 
+        # 0. Instantly emit step 0 with 0ms lag so client never waits
+        socketio.emit('ambulance_update', {
+            'emergency_id': emergency_id,
+            'location': ambulance_location.copy(),
+            'status': 'En Route to Patient',
+            'phase': 'to_patient',
+            'eta': max(1, round(dist_amb_to_pat * 2.0)),
+            'distance_km': round(dist_amb_to_pat, 2),
+            'progress': 0
+        })
+
         # 1. Fetch real road coordinates for Leg 1 (Ambulance to Patient)
         road_points, dist_m, dur_s = fetch_osrm_route(ambulance_location, patient_location)
         
@@ -948,7 +986,7 @@ def handle_tracking(data):
         total_leg1_dist = (dist_m / 1000.0) if dist_m else dist_amb_to_pat
         total_leg1_eta = max(1, round(dur_s / 60.0)) if dur_s else max(2, round(total_leg1_dist * 2.2))
 
-        # Drive to patient
+        # Drive to patient with smooth 0.6s interval
         for i, pt in enumerate(leg1_path):
             progress = (i + 1) / len(leg1_path)
             remaining_dist = max(0.0, round(total_leg1_dist * (1.0 - progress), 2))
@@ -963,7 +1001,7 @@ def handle_tracking(data):
                 'distance_km': remaining_dist,
                 'progress': round(progress * 50, 1)
             })
-            socketio.sleep(1.0)
+            socketio.sleep(0.6)
 
         # 2. Arrived at patient - Boarding phase
         socketio.emit('ambulance_update', {
@@ -975,7 +1013,7 @@ def handle_tracking(data):
             'distance_km': 0.0,
             'progress': 50
         })
-        socketio.sleep(3.0)
+        socketio.sleep(1.8)
 
         # 3. Leg 2 (Patient to Hospital)
         dist_pat_to_hosp = calculate_distance(patient_location, hospital_location)
@@ -1012,7 +1050,7 @@ def handle_tracking(data):
                 'distance_km': remaining_dist,
                 'progress': round(50 + progress * 50, 1)
             })
-            socketio.sleep(1.0)
+            socketio.sleep(0.6)
 
         # 4. Final Arrival
         socketio.emit('ambulance_update', {

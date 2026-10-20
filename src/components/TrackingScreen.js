@@ -82,37 +82,55 @@ function TrackingScreen({ data, onBack }) {
     const hosp = data.hospital.location;
     let isMounted = true;
 
+    // Immediately seed routes with 0ms lag so the map displays instantly
+    setPatientRoute([[amb.lat, amb.lng], [pat.lat, pat.lng]]);
+    setHospitalRoute([[pat.lat, pat.lng], [hosp.lat, hosp.lng]]);
+
     const fetchRoadGeometry = async () => {
       try {
-        // Leg 1: Ambulance to Patient road geometry
-        const res1 = await fetch(
-          `https://router.project-osrm.org/route/v1/driving/${amb.lng},${amb.lat};${pat.lng},${pat.lat}?overview=full&geometries=geojson`
-        );
-        const json1 = await res1.json();
-        if (isMounted && json1?.routes?.[0]) {
-          const coords1 = json1.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
-          setPatientRoute(coords1);
-          if (json1.routes[0].duration) {
-            const mins = Math.max(1, Math.round(json1.routes[0].duration / 60));
-            setLiveEta(mins);
-            setCountdownSeconds(mins * 60);
-          }
-          if (json1.routes[0].distance) {
-            setLiveDistance(Number((json1.routes[0].distance / 1000).toFixed(1)));
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+        // Fetch both route legs in parallel with fast timeout
+        const [res1, res2] = await Promise.all([
+          fetch(
+            `https://router.project-osrm.org/route/v1/driving/${amb.lng},${amb.lat};${pat.lng},${pat.lat}?overview=full&geometries=geojson`,
+            { signal: controller.signal }
+          ).catch(() => null),
+          fetch(
+            `https://router.project-osrm.org/route/v1/driving/${pat.lng},${pat.lat};${hosp.lng},${hosp.lat}?overview=full&geometries=geojson`,
+            { signal: controller.signal }
+          ).catch(() => null)
+        ]);
+
+        clearTimeout(timeoutId);
+        if (!isMounted) return;
+
+        if (res1 && res1.ok) {
+          const json1 = await res1.json();
+          if (json1?.routes?.[0]?.geometry?.coordinates) {
+            const coords1 = json1.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+            setPatientRoute(coords1);
+            if (json1.routes[0].duration) {
+              const mins = Math.max(1, Math.round(json1.routes[0].duration / 60));
+              setLiveEta(mins);
+              setCountdownSeconds(mins * 60);
+            }
+            if (json1.routes[0].distance) {
+              setLiveDistance(Number((json1.routes[0].distance / 1000).toFixed(1)));
+            }
           }
         }
 
-        // Leg 2: Patient to Hospital road geometry
-        const res2 = await fetch(
-          `https://router.project-osrm.org/route/v1/driving/${pat.lng},${pat.lat};${hosp.lng},${hosp.lat}?overview=full&geometries=geojson`
-        );
-        const json2 = await res2.json();
-        if (isMounted && json2?.routes?.[0]) {
-          const coords2 = json2.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
-          setHospitalRoute(coords2);
+        if (res2 && res2.ok) {
+          const json2 = await res2.json();
+          if (json2?.routes?.[0]?.geometry?.coordinates) {
+            const coords2 = json2.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+            setHospitalRoute(coords2);
+          }
         }
       } catch (err) {
-        console.warn('OSRM road directions error:', err);
+        console.warn('Fast OSRM road directions:', err);
       }
     };
 
