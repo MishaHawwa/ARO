@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 import math
 import os
+import uuid
 from geopy.distance import geodesic
 import numpy as np
 import pandas as pd
@@ -673,7 +674,7 @@ def handle_emergency():
     
     # Mark ambulance as unavailable
     nearest_ambulance['available'] = False
-    emergency_id = f"EMG-{int(time.time())}"
+    emergency_id = str(uuid.uuid4())
     nearest_ambulance['current_emergency_id'] = emergency_id
     nearest_ambulance['driver_status'] = 'notified'
     
