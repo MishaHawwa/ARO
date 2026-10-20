@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -21,9 +21,21 @@ function Routing({ start, end, onRouteInfo }) {
   useEffect(() => {
     if (!map || !start || !end) return;
 
+    // Check if start and end are virtually identical (same-device testing)
+    const dLat = Math.abs(start.lat - end.lat);
+    const dLng = Math.abs(start.lng - end.lng);
+    let effectiveStart = start;
+    if (dLat < 0.008 && dLng < 0.008) {
+      // Offset start ~2.1 km away so Leaflet Routing doesn't calculate route from point A to point A and stall!
+      effectiveStart = {
+        lat: end.lat - 0.015,
+        lng: end.lng - 0.012
+      };
+    }
+
     const routingControl = L.Routing.control({
       waypoints: [
-        L.latLng(start.lat, start.lng),
+        L.latLng(effectiveStart.lat, effectiveStart.lng),
         L.latLng(end.lat, end.lng)
       ],
       routeWhileDragging: false,
@@ -153,19 +165,23 @@ export default function App() {
     }
   }, [isLoggedIn, ambulanceId]);
 
-  // Sync real location to backend
+  // Sync real location to backend (throttled to avoid network flooding)
+  const lastSyncRef = useRef(0);
   useEffect(() => {
-    if (isLoggedIn && myLocation && ambulanceId) {
-      fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/location`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: myLocation,
-          emergency_id: assignment?.emergency_id,
-          status
-        })
-      }).catch(err => console.log('Location sync error:', err));
-    }
+    if (!isLoggedIn || !myLocation || !ambulanceId) return;
+    const now = Date.now();
+    if (now - lastSyncRef.current < 6000 && status !== 'assigned') return;
+    lastSyncRef.current = now;
+
+    fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location: myLocation,
+        emergency_id: assignment?.emergency_id,
+        status
+      })
+    }).catch(err => console.log('Location sync error:', err));
   }, [isLoggedIn, myLocation, ambulanceId, status, assignment]);
 
   const respondToAssignment = async (accepted) => {

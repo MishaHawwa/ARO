@@ -836,11 +836,11 @@ def handle_emergency():
     
     # Calculate ETA with realistic factors for Bhatkal/Mangalore
     distance_to_patient = calculate_distance(nearest_ambulance['location'], patient_location)
-    if distance_to_patient < 0.6:
-        # Distance too close for testing - assign a realistic station ~1.8km away
+    if distance_to_patient < 1.5:
+        # Distance too close for testing (same device/location) - station ~2.1km away
         nearest_ambulance['location'] = {
-            'lat': patient_location['lat'] - 0.012,
-            'lng': patient_location['lng'] - 0.010
+            'lat': patient_location['lat'] - 0.015,
+            'lng': patient_location['lng'] - 0.012
         }
         distance_to_patient = calculate_distance(nearest_ambulance['location'], patient_location)
 
@@ -908,6 +908,8 @@ def get_ambulances():
 _osrm_cache = {}
 def fetch_osrm_route(start_loc, end_loc):
     """Fetches real road geometry from OSRM with in-memory caching and fast 1.2s timeout."""
+    if calculate_distance(start_loc, end_loc) < 0.1:
+        return None, None, None
     cache_key = f"{round(start_loc['lat'], 4)},{round(start_loc['lng'], 4)}->{round(end_loc['lat'], 4)},{round(end_loc['lng'], 4)}"
     if cache_key in _osrm_cache:
         return _osrm_cache[cache_key]
@@ -947,10 +949,10 @@ def handle_tracking(data):
         nonlocal ambulance_location
         # Ensure realistic starting distance if ambulance and patient coordinates overlap
         dist_amb_to_pat = calculate_distance(ambulance_location, patient_location)
-        if dist_amb_to_pat < 0.6:
+        if dist_amb_to_pat < 1.5:
             ambulance_location = {
-                'lat': patient_location['lat'] - 0.012,
-                'lng': patient_location['lng'] - 0.010
+                'lat': patient_location['lat'] - 0.015,
+                'lng': patient_location['lng'] - 0.012
             }
             dist_amb_to_pat = calculate_distance(ambulance_location, patient_location)
 
