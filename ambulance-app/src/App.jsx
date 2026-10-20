@@ -138,7 +138,7 @@ export default function App() {
   if (!isLoggedIn) {
     return (
       <div style={{ padding: 40, fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", background: '#f5f5f7', color: '#333', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <h1 style={{ fontSize: '2.5rem', marginBottom: '30px', color: '#d32f2f' }}>Emergency System</h1>
+        <h1 style={{ fontSize: '2.5rem', marginBottom: '30px', color: '#d32f2f' }}>Emergency App</h1>
         <h2 style={{ fontSize: '1.5rem', fontWeight: 400, color: '#666', marginBottom: '40px' }}>Driver Portal</h2>
         
         <div style={{ background: 'white', padding: '40px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>

@@ -1,11 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import io from 'socket.io-client';
 import './TrackingScreen.css';
 import 'leaflet/dist/leaflet.css';
 import HospitalScoreboard from './HospitalScoreboard';
 import EmergencyChatbot from './EmergencyChatbot';
+
+function MapRecenter({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && center[0] && center[1]) {
+      map.panTo(center, { animate: true });
+    }
+  }, [center, map]);
+  return null;
+}
 
 // Fix for default marker icons in react-leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -47,7 +57,8 @@ function TrackingScreen({ data, onBack }) {
   const [showSuggestions, setShowSuggestions] = useState(true);
 
   useEffect(() => {
-    const socket = io(process.env.REACT_APP_API_URL || `http://${window.location.hostname}:5000`);
+    const API_BASE_URL = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://aro-backend-tvkq.onrender.com');
+    const socket = io(API_BASE_URL);
 
     socket.on('connect', () => {
       console.log('Connected to tracking server');
@@ -60,8 +71,12 @@ function TrackingScreen({ data, onBack }) {
     });
 
     socket.on('ambulance_update', (update) => {
-      setAmbulanceLocation(update.location);
-      setAmbulanceStatus(update.status);
+      if (update.location) {
+        setAmbulanceLocation(update.location);
+      }
+      if (update.status) {
+        setAmbulanceStatus(update.status);
+      }
     });
 
     socket.on('ambulance_arrived', () => {
@@ -120,6 +135,7 @@ function TrackingScreen({ data, onBack }) {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             />
+            <MapRecenter center={[ambulanceLocation.lat, ambulanceLocation.lng]} />
             
             <Marker position={[data.patient_location.lat, data.patient_location.lng]} icon={patientIcon}>
               <Popup>Patient Location</Popup>

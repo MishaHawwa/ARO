@@ -82,7 +82,7 @@ function Dashboard({ onEmergencySelect }) {
       <div className="dashboard-header">
         <div className="header-top">
           <div>
-            <h1>Emergency Response System</h1>
+            <h1>Emergency App</h1>
             <p className="subtitle">
               Real-time ambulance dispatch and hospital optimization
             </p>

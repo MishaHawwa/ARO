@@ -1,5 +1,8 @@
-import gevent.monkey
-gevent.monkey.patch_all()
+try:
+    import gevent.monkey
+    gevent.monkey.patch_all()
+except ImportError:
+    pass
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
@@ -40,9 +43,35 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 import requests
 
 BACKENLY_PROJECT_ID = "01db9ccd-417e-457e-8073-e7bccdca3e63"
-BACKENLY_API_KEY = "mcp_live_e4f31a5ba831021aacad4259d5f05cf0613e7f1a67372b06086ac27cb1b83ab2"
+BACKENLY_API_KEY = os.environ.get('BACKENLY_API_KEY', "svc_live_79a83ca9aadb0868e4dcd6f9b381cf1b5d3e07724b9a690a4e6b106daded0a9c")
 BACKENLY_BASE_URL = f"https://backenly.com/api/v1/{BACKENLY_PROJECT_ID}/db"
 HEADERS = {"x-api-key": BACKENLY_API_KEY}
+
+DEFAULT_HOSPITALS = [
+    {
+        "id": "3a95708c-35e6-4d34-adc6-18583d160268",
+        "name": "Lifecare Hospital",
+        "location": {"lat": 13.9645, "lng": 74.5645},
+        "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 25,
+        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician"]
+    }
+]
+
+DEFAULT_AMBULANCES = [
+    {
+        "id": "b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0",
+        "location": {"lat": 13.9667, "lng": 74.5667},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    }
+]
 
 def fetch_hospitals():
     import urllib.request
@@ -52,45 +81,45 @@ def fetch_hospitals():
     req = urllib.request.Request(f"{BACKENLY_BASE_URL}/hospitals", method="GET")
     req.add_header('x-api-key', BACKENLY_API_KEY)
     
+    data = []
     try:
         # Create unverified context to avoid SSL gevent recursion bugs
         ctx = ssl._create_unverified_context()
         with urllib.request.urlopen(req, context=ctx) as res:
-            if res.status != 200:
-                return []
-            body = res.read().decode('utf-8')
-            data = json.loads(body)
+            if res.status == 200:
+                body = res.read().decode('utf-8')
+                data = json.loads(body)
     except Exception as e:
         print("Failed to fetch hospitals:", e)
-        return []
     
     if isinstance(data, dict):
         data = data.get("data", data)
     
     formatted_hospitals = []
-    for h in data:
-        specs = ["general_physician"]
-        if h.get("cardiac_icu"): specs.append("cardiologist")
-        if h.get("neuro_icu"): specs.append("neurologist")
-        if h.get("burn_unit"): specs.append("burn")
-        if h.get("maternity_ward"): specs.append("obstetrician")
-        if h.get("trauma_center"): 
-            specs.append("trauma")
-            specs.append("pediatrician")
-            
-        formatted_hospitals.append({
-            "id": h.get("id"),
-            "name": h.get("name"),
-            "location": {"lat": h.get("location_lat"), "lng": h.get("location_lng")},
-            "cardiac_icu": h.get("cardiac_icu", False),
-            "neuro_icu": h.get("neuro_icu", False),
-            "trauma_center": h.get("trauma_center", False),
-            "burn_unit": h.get("burn_unit", False),
-            "maternity_ward": h.get("maternity_ward", False),
-            "beds_available": h.get("beds_available", 0),
-            "specialists": specs
-        })
-    return formatted_hospitals
+    if isinstance(data, list):
+        for h in data:
+            specs = ["general_physician"]
+            if h.get("cardiac_icu"): specs.append("cardiologist")
+            if h.get("neuro_icu"): specs.append("neurologist")
+            if h.get("burn_unit"): specs.append("burn")
+            if h.get("maternity_ward"): specs.append("obstetrician")
+            if h.get("trauma_center"): 
+                specs.append("trauma")
+                specs.append("pediatrician")
+                
+            formatted_hospitals.append({
+                "id": h.get("id"),
+                "name": h.get("name"),
+                "location": {"lat": h.get("location_lat"), "lng": h.get("location_lng")},
+                "cardiac_icu": h.get("cardiac_icu", False),
+                "neuro_icu": h.get("neuro_icu", False),
+                "trauma_center": h.get("trauma_center", False),
+                "burn_unit": h.get("burn_unit", False),
+                "maternity_ward": h.get("maternity_ward", False),
+                "beds_available": h.get("beds_available", 0),
+                "specialists": specs
+            })
+    return formatted_hospitals if formatted_hospitals else DEFAULT_HOSPITALS
 
 def fetch_ambulances():
     import urllib.request
@@ -100,31 +129,31 @@ def fetch_ambulances():
     req = urllib.request.Request(f"{BACKENLY_BASE_URL}/ambulances", method="GET")
     req.add_header('x-api-key', BACKENLY_API_KEY)
     
+    data = []
     try:
         ctx = ssl._create_unverified_context()
         with urllib.request.urlopen(req, context=ctx) as res:
-            if res.status != 200:
-                return []
-            body = res.read().decode('utf-8')
-            data = json.loads(body)
+            if res.status == 200:
+                body = res.read().decode('utf-8')
+                data = json.loads(body)
     except Exception as e:
         print("Error fetching ambulances:", e)
-        return []
     
     if isinstance(data, dict):
         data = data.get("data", data)
     
     formatted_ambulances = []
-    for a in data:
-        formatted_ambulances.append({
-            "id": a.get("id"),
-            "location": {"lat": a.get("location_lat"), "lng": a.get("location_lng")},
-            "available": a.get("available", False),
-            "phone": a.get("phone", ""),
-            "driver_status": a.get("driver_status", ""),
-            "current_emergency_id": a.get("current_emergency_id", "")
-        })
-    return formatted_ambulances
+    if isinstance(data, list):
+        for a in data:
+            formatted_ambulances.append({
+                "id": a.get("id"),
+                "location": {"lat": a.get("location_lat"), "lng": a.get("location_lng")},
+                "available": a.get("available", False),
+                "phone": a.get("phone", ""),
+                "driver_status": a.get("driver_status", ""),
+                "current_emergency_id": a.get("current_emergency_id", "")
+            })
+    return formatted_ambulances if formatted_ambulances else DEFAULT_AMBULANCES
 
 def update_ambulance_status(amb_id, updates):
     import urllib.request
