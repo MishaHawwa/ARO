@@ -228,6 +228,20 @@ function TrackingScreen({ data, onBack }) {
     };
   }, [data, resolvedAmbulanceLoc]);
 
+  // Live dynamic route line updating as the ambulance travels in real-time
+  useEffect(() => {
+    if (!ambulanceLocation) return;
+    if (journeyPhase === 'to_hospital') {
+      if (data?.hospital?.location) {
+        setHospitalRoute(generateRoadWaypoints(ambulanceLocation, data.hospital.location));
+      }
+    } else {
+      if (data?.patient_location) {
+        setPatientRoute(generateRoadWaypoints(ambulanceLocation, data.patient_location));
+      }
+    }
+  }, [ambulanceLocation, journeyPhase, data?.patient_location, data?.hospital?.location]);
+
   const formatCountdown = () => {
     if (ambulanceStatus.includes('Arrived at Hospital')) return 'Arrived';
     if (ambulanceStatus.includes('At Patient')) return 'At Patient';

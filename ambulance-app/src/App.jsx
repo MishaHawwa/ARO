@@ -67,8 +67,21 @@ function Routing({ start, end, onRouteInfo }) {
   return null;
 }
 
+const FLEET_UNITS = [
+  { id: 'b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0', alias: 'Unit KA-B2D0', label: 'Mangalore Central' },
+  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0002', alias: 'Unit KA-A1C0', label: 'Mangalore Kadri' },
+  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0003', alias: 'Unit KA-A1C1', label: 'Mangalore Kankanady' },
+  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0004', alias: 'Unit KA-A1C2', label: 'Mangalore Deralakatte' },
+  { id: 'h1c0d054-8d8a-42d6-b4fc-aecfb77f0005', alias: 'Unit KA-H1C0', label: 'Honnavar Port' },
+  { id: 'h1c0d054-8d8a-42d6-b4fc-aecfb77f0006', alias: 'Unit KA-H1C1', label: 'Honnavar Taluk Center' },
+  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0007', alias: 'Unit KA-B1C0', label: 'Bhatkal Main Road' },
+  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0008', alias: 'Unit KA-B1C1', label: 'Bhatkal Coastal' }
+];
+
 const formatAmbulanceAlias = (uuid) => {
   if (!uuid) return '';
+  const match = FLEET_UNITS.find(u => u.id === uuid);
+  if (match) return `${match.alias} (${match.label})`;
   const part1 = uuid.substring(0, 4).toUpperCase();
   const part2 = uuid.substring(4, 6).toUpperCase();
   return `KA-${part1}-${part2}`;
@@ -76,7 +89,7 @@ const formatAmbulanceAlias = (uuid) => {
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [ambulanceId] = useState('b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0');
+  const [ambulanceId, setAmbulanceId] = useState('b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0');
   const [socket, setSocket] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, assigned, en_route_to_patient, en_route_to_hospital, arrived_at_hospital
   const [assignment, setAssignment] = useState(null);
@@ -149,9 +162,6 @@ export default function App() {
       });
 
       newSocket.on('ambulance_update', (update) => {
-        if (update.location) {
-          setMyLocation(update.location);
-        }
         if (update.eta !== undefined) {
           setRouteInfo(prev => ({ ...prev, etaMins: update.eta }));
           setCountdownSeconds(update.eta * 60);
@@ -165,12 +175,23 @@ export default function App() {
     }
   }, [isLoggedIn, ambulanceId]);
 
-  // Sync real location to backend (throttled to avoid network flooding)
+  // Instant real-time GPS streaming over Socket.IO (0ms latency, zero DB quota used)
+  useEffect(() => {
+    if (!socket || !isLoggedIn || !myLocation) return;
+    socket.emit('driver_location_update', {
+      ambulance_id: ambulanceId,
+      emergency_id: assignment?.emergency_id,
+      location: myLocation,
+      status: status
+    });
+  }, [socket, isLoggedIn, myLocation, ambulanceId, assignment?.emergency_id, status]);
+
+  // Backup HTTP location sync (throttled)
   const lastSyncRef = useRef(0);
   useEffect(() => {
     if (!isLoggedIn || !myLocation || !ambulanceId) return;
     const now = Date.now();
-    if (now - lastSyncRef.current < 6000 && status !== 'assigned') return;
+    if (now - lastSyncRef.current < 10000 && status !== 'assigned') return;
     lastSyncRef.current = now;
 
     fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/location`, {
@@ -186,6 +207,14 @@ export default function App() {
 
   const respondToAssignment = async (accepted) => {
     try {
+      if (socket && assignment) {
+        socket.emit('driver_status_update', {
+          ambulance_id: ambulanceId,
+          emergency_id: assignment.emergency_id,
+          status: accepted ? 'en_route_to_patient' : 'idle'
+        });
+      }
+
       await fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/respond`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -213,10 +242,18 @@ export default function App() {
 
   const updateStatus = async (newStatus) => {
     try {
+      if (socket && assignment) {
+        socket.emit('driver_status_update', {
+          ambulance_id: ambulanceId,
+          emergency_id: assignment.emergency_id,
+          status: newStatus
+        });
+      }
+
       await fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify({ status: newStatus, emergency_id: assignment?.emergency_id })
       });
       setStatus(newStatus);
       if (newStatus === 'arrived_at_hospital') {
@@ -227,6 +264,36 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  // Step movement on desktop/simulator for live testing
+  const stepTowardsTarget = () => {
+    if (!assignment) return;
+    const target = status === 'en_route_to_patient' ? assignment.patient_location : assignment.hospital?.location;
+    if (!target) return;
+    
+    const latDiff = target.lat - myLocation.lat;
+    const lngDiff = target.lng - myLocation.lng;
+    const distTotal = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
+    if (distTotal < 0.0006) {
+      if (status === 'en_route_to_patient') updateStatus('en_route_to_hospital');
+      else updateStatus('arrived_at_hospital');
+      return;
+    }
+    const stepRatio = Math.min(0.2, 0.0025 / distTotal);
+    const newLoc = {
+      lat: Number((myLocation.lat + latDiff * stepRatio).toFixed(6)),
+      lng: Number((myLocation.lng + lngDiff * stepRatio).toFixed(6))
+    };
+    setMyLocation(newLoc);
+    if (socket) {
+      socket.emit('driver_location_update', {
+        ambulance_id: ambulanceId,
+        emergency_id: assignment.emergency_id,
+        location: newLoc,
+        status: status
+      });
     }
   };
 
@@ -253,11 +320,17 @@ export default function App() {
         <h1 style={{ fontSize: '2.5rem', marginBottom: '10px', color: '#d32f2f' }}>Emergency App</h1>
         <h2 style={{ fontSize: '1.4rem', fontWeight: 400, color: '#666', marginBottom: '35px' }}>Driver Portal</h2>
         
-        <div style={{ background: 'white', padding: '40px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 30px rgba(0,0,0,0.08)', textAlign: 'center', boxSizing: 'border-box' }}>
-          <label style={{ display: 'block', marginBottom: '10px', color: '#666', fontWeight: 'bold', fontSize: '0.95rem' }}>Assigned Vehicle:</label>
-          <div style={{ padding: '16px', fontSize: 20, marginBottom: 28, background: '#f9f9f9', color: '#d32f2f', border: '1px solid #e0e0e0', borderRadius: '10px', fontWeight: 'bold', letterSpacing: '1px' }}>
-            {formatAmbulanceAlias(ambulanceId)}
-          </div>
+        <div style={{ background: 'white', padding: '40px', borderRadius: '16px', width: '100%', maxWidth: '440px', boxShadow: '0 10px 30px rgba(0,0,0,0.08)', textAlign: 'center', boxSizing: 'border-box' }}>
+          <label style={{ display: 'block', marginBottom: '10px', color: '#666', fontWeight: 'bold', fontSize: '0.95rem' }}>Select Assigned Vehicle Unit:</label>
+          <select 
+            value={ambulanceId} 
+            onChange={(e) => setAmbulanceId(e.target.value)}
+            style={{ width: '100%', padding: '14px', fontSize: 16, marginBottom: 28, background: '#f9f9f9', color: '#d32f2f', border: '1px solid #e0e0e0', borderRadius: '10px', fontWeight: 'bold' }}
+          >
+            {FLEET_UNITS.map(u => (
+              <option key={u.id} value={u.id}>{u.alias} — {u.label}</option>
+            ))}
+          </select>
           <button onClick={() => setIsLoggedIn(true)} style={{ width: '100%', padding: '16px', fontSize: 18, background: '#d32f2f', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(211, 47, 47, 0.3)' }}>
             Start Shift
           </button>
@@ -369,7 +442,14 @@ export default function App() {
                 </div>
               </div>
 
-              <div>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button 
+                  onClick={stepTowardsTarget}
+                  title="Simulate driving 250m closer towards destination"
+                  style={{ padding: '14px 20px', fontSize: 15, background: '#f8fafc', color: '#1e293b', border: '1px solid #cbd5e1', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                  🚗 Test Move 250m
+                </button>
                 {status === 'en_route_to_patient' ? (
                   <button 
                     onClick={() => updateStatus('en_route_to_hospital')}

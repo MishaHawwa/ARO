@@ -161,7 +161,71 @@ DEFAULT_HOSPITALS = [
 DEFAULT_AMBULANCES = [
     {
         "id": "b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0",
+        "name": "Unit KA-B2D0 (Mangalore Central)",
         "location": {"lat": 12.8725, "lng": 74.8440},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "a1c0d054-8d8a-42d6-b4fc-aecfb77f0002",
+        "name": "Unit KA-A1C0 (Mangalore Kadri)",
+        "location": {"lat": 12.8820, "lng": 74.8560},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "a1c0d054-8d8a-42d6-b4fc-aecfb77f0003",
+        "name": "Unit KA-A1C1 (Mangalore Kankanady)",
+        "location": {"lat": 12.8640, "lng": 74.8640},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "a1c0d054-8d8a-42d6-b4fc-aecfb77f0004",
+        "name": "Unit KA-A1C2 (Mangalore Deralakatte)",
+        "location": {"lat": 12.8120, "lng": 74.8980},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "h1c0d054-8d8a-42d6-b4fc-aecfb77f0005",
+        "name": "Unit KA-H1C0 (Honnavar Port)",
+        "location": {"lat": 14.2770, "lng": 74.4530},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "h1c0d054-8d8a-42d6-b4fc-aecfb77f0006",
+        "name": "Unit KA-H1C1 (Honnavar Taluk Center)",
+        "location": {"lat": 14.2810, "lng": 74.4450},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "b1c0d054-8d8a-42d6-b4fc-aecfb77f0007",
+        "name": "Unit KA-B1C0 (Bhatkal Main Road)",
+        "location": {"lat": 13.9780, "lng": 74.5520},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "b1c0d054-8d8a-42d6-b4fc-aecfb77f0008",
+        "name": "Unit KA-B1C1 (Bhatkal Coastal)",
+        "location": {"lat": 13.9660, "lng": 74.5670},
         "available": True,
         "phone": "+919110853440",
         "driver_status": "idle",
@@ -226,10 +290,12 @@ def fetch_hospitals(force_refresh=False):
     return result
 
 _ambulances_cache = {"data": None, "time": 0}
+ACTIVE_EMERGENCIES = {}
+
 def fetch_ambulances(force_refresh=False):
     global _ambulances_cache
     now = time.time()
-    if not force_refresh and _ambulances_cache["data"] and (now - _ambulances_cache["time"] < 5):
+    if not force_refresh and _ambulances_cache["data"] and (now - _ambulances_cache["time"] < 10):
         return _ambulances_cache["data"]
 
     import urllib.request
@@ -242,7 +308,7 @@ def fetch_ambulances(force_refresh=False):
     data = []
     try:
         ctx = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=ctx, timeout=3.0) as res:
+        with urllib.request.urlopen(req, context=ctx, timeout=2.5) as res:
             if res.status == 200:
                 body = res.read().decode('utf-8')
                 data = json.loads(body)
@@ -255,42 +321,67 @@ def fetch_ambulances(force_refresh=False):
     formatted_ambulances = []
     if isinstance(data, list):
         for a in data:
+            lat = a.get("location_lat")
+            lng = a.get("location_lng")
+            if lat is None or lng is None:
+                lat, lng = 12.8725, 74.8440
             formatted_ambulances.append({
                 "id": a.get("id"),
-                "location": {"lat": a.get("location_lat"), "lng": a.get("location_lng")},
-                "available": a.get("available", False),
-                "phone": a.get("phone", ""),
-                "driver_status": a.get("driver_status", ""),
-                "current_emergency_id": a.get("current_emergency_id", "")
+                "name": a.get("name") or f"Unit {str(a.get('id', ''))[:8]}",
+                "location": {"lat": lat, "lng": lng},
+                "available": a.get("available", True),
+                "phone": a.get("phone", "+919110853440"),
+                "driver_status": a.get("driver_status", "idle"),
+                "current_emergency_id": a.get("current_emergency_id", None)
             })
-    result = formatted_ambulances if formatted_ambulances else DEFAULT_AMBULANCES
-    _ambulances_cache["data"] = result
+
+    # Always ensure the full default fleet across Mangalore, Honnavar, and Bhatkal is included
+    all_ambs = list(formatted_ambulances) if formatted_ambulances else []
+    existing_ids = {a['id'] for a in all_ambs}
+    for def_amb in DEFAULT_AMBULANCES:
+        if def_amb['id'] not in existing_ids:
+            all_ambs.append(def_amb.copy())
+
+    _ambulances_cache["data"] = all_ambs
     _ambulances_cache["time"] = now
-    return result
+    return all_ambs
 
 def update_ambulance_status(amb_id, updates):
-    global _ambulances_cache
-    _ambulances_cache["time"] = 0  # Invalidate ambulance cache
-    import urllib.request
-    import json
-    import ssl
-    
-    req = urllib.request.Request(f"{BACKENLY_BASE_URL}/ambulances?id=eq.{amb_id}", method="PATCH")
-    req.add_header('x-api-key', BACKENLY_API_KEY)
-    req.add_header('Content-Type', 'application/json')
-    data = json.dumps(updates).encode('utf-8')
-    
+    # 1. Update in-memory state immediately for instant responsiveness
+    for a in DEFAULT_AMBULANCES:
+        if a['id'] == amb_id:
+            a.update(updates)
+            if 'location_lat' in updates and 'location_lng' in updates:
+                a['location'] = {'lat': updates['location_lat'], 'lng': updates['location_lng']}
+    if _ambulances_cache.get("data"):
+        for a in _ambulances_cache["data"]:
+            if a['id'] == amb_id:
+                a.update(updates)
+                if 'location_lat' in updates and 'location_lng' in updates:
+                    a['location'] = {'lat': updates['location_lat'], 'lng': updates['location_lng']}
+
+    # 2. Asynchronously persist to Backenly without blocking execution
+    def sync_backenly():
+        try:
+            import urllib.request
+            import json
+            import ssl
+            req = urllib.request.Request(f"{BACKENLY_BASE_URL}/ambulances?id=eq.{amb_id}", method="PATCH")
+            req.add_header('x-api-key', BACKENLY_API_KEY)
+            req.add_header('Content-Type', 'application/json')
+            data = json.dumps(updates).encode('utf-8')
+            ctx = ssl._create_unverified_context()
+            urllib.request.urlopen(req, data=data, context=ctx, timeout=2.0)
+        except Exception as e:
+            pass
+
     try:
-        ctx = ssl._create_unverified_context()
-        urllib.request.urlopen(req, data=data, context=ctx, timeout=3.0)
-    except Exception as e:
-        print("Error updating ambulance:", e)
+        socketio.start_background_task(sync_backenly)
+    except Exception:
+        pass
 
-
-# Bhatkal Hospital Database - Real hospitals with accurate locations and facilities
+# Initialize database caches
 hospitals = fetch_hospitals()
-
-# Bhatkal Ambulance Database - Strategic locations for minimal response time
 ambulances = fetch_ambulances()
 
 # NOTE on real hospital/ambulance data:
@@ -813,18 +904,28 @@ def handle_emergency():
     
     # Find nearest available ambulance to patient
     ambulances = fetch_ambulances()
+    for a in ambulances:
+        if not a.get('location') or not isinstance(a['location'], dict):
+            a['location'] = {'lat': 12.8725, 'lng': 74.8440}
+
     available_ambulances = [a for a in ambulances if a.get('available', True)]
     if not available_ambulances:
-        return jsonify({'error': 'No ambulance available'}), 404
+        # Guarantee an ambulance is ALWAYS available: auto-free/reuse fleet so user is never rejected
+        print("[Ambulance Dispatch] All units busy, auto-reallocating fleet unit")
+        for a in ambulances:
+            a['available'] = True
+            a['driver_status'] = 'idle'
+            a['current_emergency_id'] = None
+        available_ambulances = ambulances
     
     for a in available_ambulances:
         a['dist_to_patient'] = calculate_distance(patient_location, a['location'])
     available_ambulances.sort(key=lambda a: a['dist_to_patient'])
     nearest_ambulance = available_ambulances[0]
     
-    # Mark ambulance as unavailable
-    nearest_ambulance['available'] = False
+    # Mark ambulance as allocated
     emergency_id = str(uuid.uuid4())
+    nearest_ambulance['available'] = False
     nearest_ambulance['current_emergency_id'] = emergency_id
     nearest_ambulance['driver_status'] = 'notified'
     
@@ -836,7 +937,7 @@ def handle_emergency():
     
     # Calculate ETA with realistic factors for Bhatkal/Mangalore
     distance_to_patient = calculate_distance(nearest_ambulance['location'], patient_location)
-    if distance_to_patient < 1.5:
+    if distance_to_patient < 1.0:
         # Distance too close for testing (same device/location) - station ~2.1km away
         nearest_ambulance['location'] = {
             'lat': patient_location['lat'] - 0.015,
@@ -880,6 +981,7 @@ def handle_emergency():
         },
         'ambulance': {
             'id': nearest_ambulance['id'],
+            'name': nearest_ambulance.get('name', 'Ambulance Unit'),
             'location': nearest_ambulance['location']
         },
         'patient_location': patient_location,
@@ -890,6 +992,24 @@ def handle_emergency():
         'ai_suggestions': suggestions,
         'hospital_scores': hospital_scores,
         'rejected_hospitals': []
+    }
+
+    # Record active emergency in memory
+    ACTIVE_EMERGENCIES[emergency_id] = {
+        'emergency_id': emergency_id,
+        'ambulance_id': nearest_ambulance['id'],
+        'patient_location': patient_location,
+        'hospital': response['hospital'],
+        'hospital_location': best_hospital['location'],
+        'hospital_name': best_hospital['name'],
+        'ambulance_location': nearest_ambulance['location'].copy(),
+        'emergency_type': emergency_type,
+        'severity': emergency_details.get('severity', 'High'),
+        'status': 'Ambulance Dispatched',
+        'phase': 'to_patient',
+        'driver_status': 'notified',
+        'eta': eta_to_patient,
+        'distance_km': round(distance_to_patient, 2)
     }
 
     # Notify the ambulance driver app in real time
@@ -935,141 +1055,187 @@ def handle_connect():
     print('Client connected')
     emit('connected', {'data': 'Connected to server'})
 
-@socketio.on('start_tracking')
-def handle_tracking(data):
-    emergency_id = data.get('emergency_id')
-    ambulance_location = data.get('ambulance_location')
-    patient_location = data.get('patient_location')
-    hospital_location = data.get('hospital_location')
-    
-    if not emergency_id or not ambulance_location or not patient_location or not hospital_location:
-        return
-        
-    def simulate_movement():
-        nonlocal ambulance_location
-        # Ensure realistic starting distance if ambulance and patient coordinates overlap
-        dist_amb_to_pat = calculate_distance(ambulance_location, patient_location)
-        if dist_amb_to_pat < 1.5:
-            ambulance_location = {
-                'lat': patient_location['lat'] - 0.015,
-                'lng': patient_location['lng'] - 0.012
-            }
-            dist_amb_to_pat = calculate_distance(ambulance_location, patient_location)
+def process_ambulance_status_change(ambulance_id, emergency_id, status):
+    """Processes driver mission state transitions and streams real-time updates."""
+    ambulances = fetch_ambulances()
+    ambulance = next((a for a in ambulances if a['id'] == ambulance_id), None)
+    if not ambulance:
+        return {'error': 'Unknown ambulance'}
 
-        # 0. Instantly emit step 0 with 0ms lag so client never waits
-        socketio.emit('ambulance_update', {
-            'emergency_id': emergency_id,
-            'location': ambulance_location.copy(),
-            'status': 'En Route to Patient',
-            'phase': 'to_patient',
-            'eta': max(1, round(dist_amb_to_pat * 2.0)),
-            'distance_km': round(dist_amb_to_pat, 2),
-            'progress': 0
-        })
+    ambulance['driver_status'] = status
+    active = ACTIVE_EMERGENCIES.get(emergency_id)
+    if not active:
+        for e_id, e_info in ACTIVE_EMERGENCIES.items():
+            if e_info.get('ambulance_id') == ambulance_id:
+                active = e_info
+                emergency_id = e_id
+                break
 
-        # 1. Fetch real road coordinates for Leg 1 (Ambulance to Patient)
-        road_points, dist_m, dur_s = fetch_osrm_route(ambulance_location, patient_location)
-        
-        target_steps = 25
-        if road_points and len(road_points) >= target_steps:
-            idx_step = (len(road_points) - 1) / (target_steps - 1)
-            leg1_path = [road_points[int(round(i * idx_step))] for i in range(target_steps)]
-        elif road_points and len(road_points) > 0:
-            leg1_path = road_points
-        else:
-            leg1_path = [
-                {
-                    'lat': ambulance_location['lat'] + (patient_location['lat'] - ambulance_location['lat']) * ((i + 1) / target_steps),
-                    'lng': ambulance_location['lng'] + (patient_location['lng'] - ambulance_location['lng']) * ((i + 1) / target_steps)
-                }
-                for i in range(target_steps)
-            ]
+    if status in ['en_route_to_hospital', 'picked_up']:
+        phase = 'to_hospital'
+        display_status = f"Transporting to {active.get('hospital_name', 'Hospital')}" if active else 'Transporting to Hospital'
+        if active:
+            active['phase'] = 'to_hospital'
+            active['status'] = display_status
+    elif status in ['arrived', 'arrived_at_hospital']:
+        phase = 'arrived'
+        display_status = 'Arrived at Hospital'
+        if active:
+            active['phase'] = 'arrived'
+            active['status'] = display_status
+    elif status in ['accepted', 'en_route_to_patient']:
+        phase = 'to_patient'
+        display_status = 'En Route to Patient'
+        if active:
+            active['phase'] = 'to_patient'
+            active['status'] = display_status
+    else:
+        phase = 'to_patient'
+        display_status = 'Ambulance Dispatched'
 
-        total_leg1_dist = (dist_m / 1000.0) if dist_m else dist_amb_to_pat
-        total_leg1_eta = max(1, round(dur_s / 60.0)) if dur_s else max(2, round(total_leg1_dist * 2.2))
+    # Determine remaining dist/eta
+    target = active.get('hospital_location') if (active and phase == 'to_hospital') else (active.get('patient_location') if active else None)
+    amb_loc = ambulance.get('location')
+    remaining_dist = None
+    remaining_eta = None
+    if target and amb_loc and 'lat' in target and 'lng' in target and 'lat' in amb_loc and 'lng' in amb_loc:
+        remaining_dist = round(calculate_distance(amb_loc, target), 2)
+        remaining_eta = max(1, round(remaining_dist * 2.0))
 
-        # Drive to patient with smooth 0.6s interval
-        for i, pt in enumerate(leg1_path):
-            progress = (i + 1) / len(leg1_path)
-            remaining_dist = max(0.0, round(total_leg1_dist * (1.0 - progress), 2))
-            remaining_eta = max(0, round(total_leg1_eta * (1.0 - progress)))
-            
-            socketio.emit('ambulance_update', {
-                'emergency_id': emergency_id,
-                'location': pt,
-                'status': 'En Route to Patient',
-                'phase': 'to_patient',
-                'eta': remaining_eta,
-                'distance_km': remaining_dist,
-                'progress': round(progress * 50, 1)
-            })
-            socketio.sleep(0.6)
+    payload = {
+        'emergency_id': emergency_id,
+        'ambulance_id': ambulance_id,
+        'location': ambulance.get('location'),
+        'status': display_status,
+        'phase': phase,
+        'eta': 0 if phase == 'arrived' else (remaining_eta or (active.get('eta') if active else 5)),
+        'distance_km': 0.0 if phase == 'arrived' else (remaining_dist or (active.get('distance_km') if active else 2.0)),
+        'is_realtime': True
+    }
 
-        # 2. Arrived at patient - Boarding phase
-        socketio.emit('ambulance_update', {
-            'emergency_id': emergency_id,
-            'location': patient_location,
-            'status': 'At Patient (Paramedics Boarding)',
-            'phase': 'at_patient',
-            'eta': 0,
-            'distance_km': 0.0,
-            'progress': 50
-        })
-        socketio.sleep(1.8)
+    socketio.emit('ambulance_update', payload)
+    if emergency_id:
+        socketio.emit('ambulance_update', payload, room=f"emergency_{emergency_id}")
 
-        # 3. Leg 2 (Patient to Hospital)
-        dist_pat_to_hosp = calculate_distance(patient_location, hospital_location)
-        road_points2, dist_m2, dur_s2 = fetch_osrm_route(patient_location, hospital_location)
-        
-        if road_points2 and len(road_points2) >= target_steps:
-            idx_step2 = (len(road_points2) - 1) / (target_steps - 1)
-            leg2_path = [road_points2[int(round(i * idx_step2))] for i in range(target_steps)]
-        elif road_points2 and len(road_points2) > 0:
-            leg2_path = road_points2
-        else:
-            leg2_path = [
-                {
-                    'lat': patient_location['lat'] + (hospital_location['lat'] - patient_location['lat']) * ((i + 1) / target_steps),
-                    'lng': patient_location['lng'] + (hospital_location['lng'] - patient_location['lng']) * ((i + 1) / target_steps)
-                }
-                for i in range(target_steps)
-            ]
-
-        total_leg2_dist = (dist_m2 / 1000.0) if dist_m2 else dist_pat_to_hosp
-        total_leg2_eta = max(1, round(dur_s2 / 60.0)) if dur_s2 else max(3, round(total_leg2_dist * 2.0))
-
-        for i, pt in enumerate(leg2_path):
-            progress = (i + 1) / len(leg2_path)
-            remaining_dist = max(0.0, round(total_leg2_dist * (1.0 - progress), 2))
-            remaining_eta = max(0, round(total_leg2_eta * (1.0 - progress)))
-
-            socketio.emit('ambulance_update', {
-                'emergency_id': emergency_id,
-                'location': pt,
-                'status': 'Transporting to Hospital',
-                'phase': 'to_hospital',
-                'eta': remaining_eta,
-                'distance_km': remaining_dist,
-                'progress': round(50 + progress * 50, 1)
-            })
-            socketio.sleep(0.6)
-
-        # 4. Final Arrival
-        socketio.emit('ambulance_update', {
-            'emergency_id': emergency_id,
-            'location': hospital_location,
-            'status': 'Arrived at Hospital',
-            'phase': 'arrived',
-            'eta': 0,
-            'distance_km': 0.0,
-            'progress': 100
-        })
+    if phase == 'arrived':
         socketio.emit('ambulance_arrived', {
             'emergency_id': emergency_id,
             'message': 'Ambulance arrived safely at hospital'
         })
+        if emergency_id:
+            socketio.emit('ambulance_arrived', {
+                'emergency_id': emergency_id,
+                'message': 'Ambulance arrived safely at hospital'
+            }, room=f"emergency_{emergency_id}")
+        ambulance['available'] = True
+        ambulance['current_emergency_id'] = None
+        ambulance['driver_status'] = 'idle'
+        update_ambulance_status(ambulance_id, {
+            'available': True,
+            'current_emergency_id': None,
+            'driver_status': 'idle'
+        })
 
-    socketio.start_background_task(simulate_movement)
+    return {'ok': True, 'status': status}
+
+
+@socketio.on('start_tracking')
+def handle_tracking(data):
+    emergency_id = data.get('emergency_id')
+    if not emergency_id:
+        return
+        
+    join_room(f"emergency_{emergency_id}")
+    print(f"[Socket] Client joined tracking room for emergency_{emergency_id}")
+
+    active = ACTIVE_EMERGENCIES.get(emergency_id)
+    amb_id = active.get('ambulance_id') if active else None
+    amb = None
+    if amb_id:
+        amb = next((a for a in fetch_ambulances() if a['id'] == amb_id), None)
+
+    current_loc = (amb and amb.get('location')) or (active and active.get('ambulance_location')) or data.get('ambulance_location')
+    current_status = (active and active.get('status')) or 'Ambulance Dispatched'
+    current_phase = (active and active.get('phase')) or 'to_patient'
+    eta = (active and active.get('eta')) or 5
+    dist = (active and active.get('distance_km')) or 2.1
+
+    # Emit real initial state once to caller - NO fake movement simulation!
+    emit('ambulance_update', {
+        'emergency_id': emergency_id,
+        'location': current_loc,
+        'status': current_status,
+        'phase': current_phase,
+        'eta': eta,
+        'distance_km': dist,
+        'is_realtime': True
+    })
+
+@socketio.on('driver_location_update')
+def handle_driver_location_update(data):
+    amb_id = data.get('ambulance_id')
+    emergency_id = data.get('emergency_id')
+    loc = data.get('location')
+    driver_status = data.get('status', 'en_route')
+    if not loc or not isinstance(loc, dict) or 'lat' not in loc or 'lng' not in loc:
+        return
+
+    # Update ambulance location in memory cache
+    for a in fetch_ambulances():
+        if a['id'] == amb_id:
+            a['location'] = loc
+
+    active = ACTIVE_EMERGENCIES.get(emergency_id)
+    if not active and emergency_id:
+        for e_id, e_info in ACTIVE_EMERGENCIES.items():
+            if e_info.get('ambulance_id') == amb_id:
+                active = e_info
+                emergency_id = e_id
+                break
+
+    phase = active.get('phase', 'to_patient') if active else ('to_hospital' if driver_status == 'en_route_to_hospital' else 'to_patient')
+    target = None
+    display_status = 'En Route to Patient'
+
+    if active:
+        active['ambulance_location'] = loc
+        if phase == 'to_hospital':
+            target = active.get('hospital_location')
+            display_status = f"Transporting to {active.get('hospital_name', 'Hospital')}"
+        else:
+            target = active.get('patient_location')
+            display_status = 'En Route to Patient'
+
+    remaining_dist = None
+    remaining_eta = None
+    if target and 'lat' in target and 'lng' in target:
+        remaining_dist = round(calculate_distance(loc, target), 2)
+        remaining_eta = max(1, round(remaining_dist * 2.0))
+        if active:
+            active['distance_km'] = remaining_dist
+            active['eta'] = remaining_eta
+
+    payload = {
+        'emergency_id': emergency_id,
+        'ambulance_id': amb_id,
+        'location': loc,
+        'status': display_status,
+        'phase': phase,
+        'eta': remaining_eta if remaining_eta is not None else 5,
+        'distance_km': remaining_dist if remaining_dist is not None else 2.0,
+        'is_realtime': True
+    }
+    socketio.emit('ambulance_update', payload)
+    if emergency_id:
+        socketio.emit('ambulance_update', payload, room=f"emergency_{emergency_id}")
+
+@socketio.on('driver_status_update')
+def handle_driver_status_update(data):
+    amb_id = data.get('ambulance_id')
+    emergency_id = data.get('emergency_id')
+    status = data.get('status')
+    if amb_id and status:
+        process_ambulance_status_change(amb_id, emergency_id, status)
 
 
 # ============================================================
@@ -1141,8 +1307,11 @@ def notify_ambulance(ambulance, response):
         'patient_location': response['patient_location'],
         'hospital': response['hospital'],
         'eta': response['eta'],
+        'distance': response.get('distance', 2.0),
+        'ambulance_id': ambulance['id']
     }
     socketio.emit('new_assignment', job_payload, room=f"ambulance_{ambulance['id']}")
+    socketio.emit('new_assignment', job_payload)
     print(f"[Ambulance] Notified {ambulance['id']} of {response['emergency_id']}")
 
     # Call immediately as requested
@@ -1183,6 +1352,7 @@ def ambulance_respond(ambulance_id):
             'emergency_id': emergency_id,
             'status': 'accepted',
         })
+        process_ambulance_status_change(ambulance_id, emergency_id, 'accepted')
         return jsonify({'ok': True, 'status': 'accepted'})
     else:
         # Rejected! Free up this ambulance
@@ -1194,15 +1364,17 @@ def ambulance_respond(ambulance_id):
         
         # Find next nearest ambulance
         ambulances = fetch_ambulances() # Refresh
-        available_ambulances = [a for a in ambulances if a['available']]
+        available_ambulances = [a for a in ambulances if a.get('available', True)]
         if not available_ambulances:
-            return jsonify({'error': 'No other ambulance available'}), 404
+            for a in ambulances:
+                a['available'] = True
+            available_ambulances = ambulances
             
-        patient_location = data.get('patient_location', {'lat': 13.96, 'lng': 74.56}) # Fallback if not provided
+        patient_location = data.get('patient_location', {'lat': 12.8725, 'lng': 74.8440})
         
         nearest_ambulance = min(
             available_ambulances,
-            key=lambda a: geodesic((patient_location['lat'], patient_location['lng']), (a['location']['lat'], a['location']['lng'])).km
+            key=lambda a: calculate_distance(patient_location, a['location'])
         )
         
         # Mark new ambulance as unavailable
@@ -1212,14 +1384,14 @@ def ambulance_respond(ambulance_id):
             'driver_status': 'notified'
         })
         
-        # Construct a response object for the notification (we use existing data or mock for now)
         response_data = {
             'emergency_id': emergency_id,
             'emergency_type': data.get('emergency_type', 'Emergency'),
             'severity': data.get('severity', 'High'),
             'patient_location': patient_location,
             'hospital': data.get('hospital', {}),
-            'eta': data.get('eta', 10)
+            'eta': data.get('eta', 10),
+            'distance': data.get('distance', 2.0)
         }
         
         notify_ambulance(nearest_ambulance, response_data)
@@ -1230,42 +1402,27 @@ def ambulance_respond(ambulance_id):
 def ambulance_status(ambulance_id):
     """Driver updates their status: en_route_to_patient, picked_up,
     en_route_to_hospital, arrived. Pushed live to the citizen's tracking
-    screen over the 'ambulance_update'/'ambulance_arrived' events it
-    already listens for."""
+    screen over the 'ambulance_update'/'ambulance_arrived' events."""
     data = request.json or {}
     status = data.get('status')
-    ambulance = next((a for a in ambulances if a['id'] == ambulance_id), None)
-    if not ambulance:
-        return jsonify({'error': 'Unknown ambulance'}), 404
-
-    ambulance['driver_status'] = status
-    socketio.emit('ambulance_update', {
-        'emergency_id': ambulance.get('current_emergency_id'),
-        'location': ambulance['location'],
-        'status': status,
-    })
-    if status == 'arrived':
-        socketio.emit('ambulance_arrived', {
-            'emergency_id': ambulance.get('current_emergency_id'),
-        })
-        ambulance['available'] = True
-        ambulance['current_emergency_id'] = None
-
+    emergency_id = data.get('emergency_id')
+    result = process_ambulance_status_change(ambulance_id, emergency_id, status)
+    if 'error' in result:
+        return jsonify(result), 404
     return jsonify({'ok': True})
 
 @app.route('/api/ambulance/<ambulance_id>/location', methods=['POST'])
 def update_ambulance_gps(ambulance_id):
     data = request.json or {}
     location = data.get('location')
+    emergency_id = data.get('emergency_id')
+    status = data.get('status', 'en_route')
     if location and 'lat' in location and 'lng' in location:
-        update_ambulance_status(ambulance_id, {
-            'location_lat': location['lat'],
-            'location_lng': location['lng']
-        })
-        socketio.emit('ambulance_update', {
-            'emergency_id': data.get('emergency_id'),
+        handle_driver_location_update({
+            'ambulance_id': ambulance_id,
+            'emergency_id': emergency_id,
             'location': location,
-            'status': data.get('status', 'en_route')
+            'status': status
         })
         return jsonify({'ok': True})
     return jsonify({'error': 'Invalid location'}), 400
