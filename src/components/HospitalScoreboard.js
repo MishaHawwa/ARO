@@ -16,7 +16,7 @@ function HospitalScoreboard({ scores }) {
       </p>
 
       <div className="scoreboard-list">
-        {scores.map((h) => (
+        {scores.slice(0, 5).map((h) => (
           <div
             key={h.hospital_id}
             className={

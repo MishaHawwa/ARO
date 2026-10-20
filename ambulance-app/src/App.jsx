@@ -15,7 +15,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-function Routing({ start, end }) {
+function Routing({ start, end, onRouteInfo }) {
   const map = useMap();
 
   useEffect(() => {
@@ -30,12 +30,27 @@ function Routing({ start, end }) {
       showAlternatives: false,
       fitSelectedRoutes: true,
       lineOptions: {
-        styles: [{ color: '#d32f2f', weight: 6, opacity: 0.85 }]
+        styles: [
+          { color: '#1a73e8', weight: 8, opacity: 0.35 },
+          { color: '#2563eb', weight: 5, opacity: 0.95 }
+        ]
       }
     }).addTo(map);
 
+    routingControl.on('routesfound', (e) => {
+      if (e.routes && e.routes[0] && e.routes[0].summary) {
+        const s = e.routes[0].summary;
+        if (onRouteInfo) {
+          onRouteInfo({
+            distanceKm: Number((s.totalDistance / 1000).toFixed(1)),
+            etaMins: Math.max(1, Math.round(s.totalTime / 60))
+          });
+        }
+      }
+    });
+
     return () => map.removeControl(routingControl);
-  }, [map, start, end]);
+  }, [map, start, end, onRouteInfo]);
 
   return null;
 }
@@ -54,6 +69,19 @@ export default function App() {
   const [status, setStatus] = useState('idle'); // idle, assigned, en_route_to_patient, en_route_to_hospital, arrived_at_hospital
   const [assignment, setAssignment] = useState(null);
   const [myLocation, setMyLocation] = useState({ lat: 12.8725, lng: 74.8440 });
+  const [routeInfo, setRouteInfo] = useState({ distanceKm: null, etaMins: null });
+  const [countdownSeconds, setCountdownSeconds] = useState(null);
+
+  // Dynamic 1-second countdown timer
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCountdownSeconds((prev) => {
+        if (prev === null || prev <= 0) return 0;
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -87,6 +115,26 @@ export default function App() {
         console.log('New assignment received:', data);
         setAssignment(data);
         setStatus('assigned');
+        if (data.eta) {
+          setRouteInfo(prev => ({ ...prev, etaMins: data.eta }));
+          setCountdownSeconds(data.eta * 60);
+        }
+        if (data.distance) {
+          setRouteInfo(prev => ({ ...prev, distanceKm: data.distance }));
+        }
+      });
+
+      newSocket.on('ambulance_update', (update) => {
+        if (update.location) {
+          setMyLocation(update.location);
+        }
+        if (update.eta !== undefined) {
+          setRouteInfo(prev => ({ ...prev, etaMins: update.eta }));
+          setCountdownSeconds(update.eta * 60);
+        }
+        if (update.distance_km !== undefined) {
+          setRouteInfo(prev => ({ ...prev, distanceKm: update.distance_km }));
+        }
       });
       
       return () => newSocket.close();
@@ -152,6 +200,15 @@ export default function App() {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const formatDriverCountdown = () => {
+    if (countdownSeconds && countdownSeconds > 0) {
+      const m = Math.floor(countdownSeconds / 60);
+      const s = countdownSeconds % 60;
+      return m > 0 ? `${m}m ${s < 10 ? '0' : ''}${s}s` : `${s}s`;
+    }
+    return routeInfo.etaMins ? `${routeInfo.etaMins} mins` : `${assignment?.eta || 5} mins`;
   };
 
   const renderStatusBadge = () => {
@@ -303,6 +360,28 @@ export default function App() {
               </div>
             </div>
 
+            {/* Live Google Maps Navigation Metrics Card */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+              <div style={{ background: 'white', padding: '16px 20px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #2563eb', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
+                <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Live Road ETA</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#1e40af', marginTop: '4px' }}>
+                  ⏱️ {formatDriverCountdown()}
+                </div>
+              </div>
+              <div style={{ background: 'white', padding: '16px 20px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #059669', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
+                <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Remaining Distance</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#065f46', marginTop: '4px' }}>
+                  📏 {routeInfo.distanceKm !== null ? `${routeInfo.distanceKm} km` : `${assignment?.distance || 'Calculating...'} km`}
+                </div>
+              </div>
+              <div style={{ background: 'white', padding: '16px 20px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #d97706', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
+                <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Navigation System</div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 'bold', color: '#92400e', marginTop: '6px' }}>
+                  🚦 Google Maps Blue Route
+                </div>
+              </div>
+            </div>
+
             {/* Map Card */}
             <div style={{ height: '540px', borderRadius: '16px', overflow: 'hidden', border: '1px solid #e0e0e0', boxShadow: '0 4px 20px rgba(0,0,0,0.07)' }}>
               <MapContainer center={[myLocation.lat, myLocation.lng]} zoom={13} style={{ height: '100%', width: '100%' }}>
@@ -310,6 +389,7 @@ export default function App() {
                 <Routing 
                   start={status === 'en_route_to_patient' ? myLocation : assignment.patient_location} 
                   end={status === 'en_route_to_patient' ? assignment.patient_location : assignment.hospital.location} 
+                  onRouteInfo={setRouteInfo}
                 />
               </MapContainer>
             </div>

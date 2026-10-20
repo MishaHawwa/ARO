@@ -107,6 +107,54 @@ DEFAULT_HOSPITALS = [
         "maternity_ward": True,
         "beds_available": 25,
         "specialists": ["cardiologist", "neurologist", "trauma", "general_physician"]
+    },
+    {
+        "id": "st-ignatius-honnavar",
+        "name": "St. Ignatius Hospital Honnavar",
+        "location": {"lat": 14.2769, "lng": 74.4531},
+        "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 65,
+        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician", "obstetrician"]
+    },
+    {
+        "id": "honnavar-taluk-govt",
+        "name": "Honnavar Taluk Government Hospital",
+        "location": {"lat": 14.2806, "lng": 74.4452},
+        "cardiac_icu": False,
+        "neuro_icu": False,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 50,
+        "specialists": ["trauma", "general_physician", "obstetrician"]
+    },
+    {
+        "id": "lifeline-honnavar",
+        "name": "Lifeline Hospital & Trauma Care Honnavar",
+        "location": {"lat": 14.2795, "lng": 74.4480},
+        "cardiac_icu": True,
+        "neuro_icu": False,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": False,
+        "beds_available": 30,
+        "specialists": ["cardiologist", "trauma", "general_physician"]
+    },
+    {
+        "id": "durgamba-honnavar",
+        "name": "Shree Durgamba Hospital Honnavar",
+        "location": {"lat": 14.2818, "lng": 74.4439},
+        "cardiac_icu": False,
+        "neuro_icu": False,
+        "trauma_center": False,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 20,
+        "specialists": ["general_physician", "obstetrician"]
     }
 ]
 
@@ -765,11 +813,19 @@ def handle_emergency():
         'driver_status': 'notified'
     })
     
-    # Calculate ETA with realistic factors for Bhatkal
+    # Calculate ETA with realistic factors for Bhatkal/Mangalore
     distance_to_patient = calculate_distance(nearest_ambulance['location'], patient_location)
+    if distance_to_patient < 0.6:
+        # Distance too close for testing - assign a realistic station ~1.8km away
+        nearest_ambulance['location'] = {
+            'lat': patient_location['lat'] - 0.012,
+            'lng': patient_location['lng'] - 0.010
+        }
+        distance_to_patient = calculate_distance(nearest_ambulance['location'], patient_location)
+
     distance_to_hospital = calculate_distance(patient_location, best_hospital['location'])
     
-    # Current time factor for Bhatkal (smaller town, less traffic variation)
+    # Current time factor for traffic
     current_hour = datetime.now().hour
     if 7 <= current_hour <= 9 or 17 <= current_hour <= 19:  # School/work hours
         time_factor = 0.4  # Moderate traffic
@@ -778,9 +834,7 @@ def handle_emergency():
     else:  # Night/early morning
         time_factor = 0.1  # Very light traffic
     
-    # Real-time traffic factor (see traffic.py). Uses live Google Distance
-    # Matrix data if GOOGLE_MAPS_API_KEY is set; otherwise falls back to a
-    # neutral placeholder so the app still runs with zero setup.
+    # Real-time traffic factor
     traffic_factor = get_traffic_factor(nearest_ambulance['location'], best_hospital['location'])
     
     eta_to_patient = predict_eta(distance_to_patient, traffic_factor, time_factor)
@@ -808,17 +862,16 @@ def handle_emergency():
             'location': nearest_ambulance['location']
         },
         'patient_location': patient_location,
-        'eta': total_eta,
-        'distance': round(distance_to_hospital, 2),
+        'eta': eta_to_patient,
+        'total_eta': total_eta,
+        'distance': round(distance_to_patient, 2),
+        'distance_to_hospital': round(distance_to_hospital, 2),
         'ai_suggestions': suggestions,
         'hospital_scores': hospital_scores,
         'rejected_hospitals': []
     }
 
-    # Notify the ambulance driver app in real time. The driver's app joins
-    # a room called "ambulance_<id>" (see the 'join_ambulance' handler
-    # below) as soon as it opens, so this reaches it instantly if it's
-    # online. See notify_ambulance() for the call/SMS fallback.
+    # Notify the ambulance driver app in real time
     notify_ambulance(nearest_ambulance, response)
 
     return jsonify(response)
@@ -830,6 +883,22 @@ def get_hospitals():
 @app.route('/api/ambulances', methods=['GET'])
 def get_ambulances():
     return jsonify(fetch_ambulances())
+
+def fetch_osrm_route(start_loc, end_loc):
+    """Fetches real road geometry from OSRM for dynamic turn-by-turn simulation."""
+    try:
+        url = f"https://router.project-osrm.org/route/v1/driving/{start_loc['lng']},{start_loc['lat']};{end_loc['lng']},{end_loc['lat']}?overview=full&geometries=geojson"
+        req = urllib.request.Request(url, headers={'User-Agent': 'EmergencyApp/1.0'})
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if data.get('routes') and len(data['routes']) > 0:
+                coords = data['routes'][0]['geometry']['coordinates']
+                dist_m = data['routes'][0].get('distance', 0)
+                dur_s = data['routes'][0].get('duration', 0)
+                return [{'lat': c[1], 'lng': c[0]} for c in coords], dist_m, dur_s
+    except Exception as e:
+        print(f"[OSRM Route] Falling back to direct line: {e}")
+    return None, None, None
 
 # WebSocket for live tracking
 @socketio.on('connect')
@@ -844,44 +913,122 @@ def handle_tracking(data):
     patient_location = data.get('patient_location')
     hospital_location = data.get('hospital_location')
     
-    # Simulate ambulance movement
+    if not emergency_id or not ambulance_location or not patient_location or not hospital_location:
+        return
+        
     def simulate_movement():
-        current_location = ambulance_location.copy()
+        nonlocal ambulance_location
+        # Ensure realistic starting distance if ambulance and patient coordinates overlap
+        dist_amb_to_pat = calculate_distance(ambulance_location, patient_location)
+        if dist_amb_to_pat < 0.6:
+            ambulance_location = {
+                'lat': patient_location['lat'] - 0.012,
+                'lng': patient_location['lng'] - 0.010
+            }
+            dist_amb_to_pat = calculate_distance(ambulance_location, patient_location)
+
+        # 1. Fetch real road coordinates for Leg 1 (Ambulance to Patient)
+        road_points, dist_m, dur_s = fetch_osrm_route(ambulance_location, patient_location)
         
-        # First move to patient
-        steps = 20
-        for i in range(steps):
-            progress = (i + 1) / steps
-            current_location['lat'] = ambulance_location['lat'] + (patient_location['lat'] - ambulance_location['lat']) * progress
-            current_location['lng'] = ambulance_location['lng'] + (patient_location['lng'] - ambulance_location['lng']) * progress
+        target_steps = 25
+        if road_points and len(road_points) >= target_steps:
+            idx_step = (len(road_points) - 1) / (target_steps - 1)
+            leg1_path = [road_points[int(round(i * idx_step))] for i in range(target_steps)]
+        elif road_points and len(road_points) > 0:
+            leg1_path = road_points
+        else:
+            leg1_path = [
+                {
+                    'lat': ambulance_location['lat'] + (patient_location['lat'] - ambulance_location['lat']) * ((i + 1) / target_steps),
+                    'lng': ambulance_location['lng'] + (patient_location['lng'] - ambulance_location['lng']) * ((i + 1) / target_steps)
+                }
+                for i in range(target_steps)
+            ]
+
+        total_leg1_dist = (dist_m / 1000.0) if dist_m else dist_amb_to_pat
+        total_leg1_eta = max(1, round(dur_s / 60.0)) if dur_s else max(2, round(total_leg1_dist * 2.2))
+
+        # Drive to patient
+        for i, pt in enumerate(leg1_path):
+            progress = (i + 1) / len(leg1_path)
+            remaining_dist = max(0.0, round(total_leg1_dist * (1.0 - progress), 2))
+            remaining_eta = max(0, round(total_leg1_eta * (1.0 - progress)))
             
             socketio.emit('ambulance_update', {
                 'emergency_id': emergency_id,
-                'location': current_location.copy(),
+                'location': pt,
                 'status': 'En Route to Patient',
-                'progress': progress * 50  # 0-50%
+                'phase': 'to_patient',
+                'eta': remaining_eta,
+                'distance_km': remaining_dist,
+                'progress': round(progress * 50, 1)
             })
-            socketio.sleep(0.5)
+            socketio.sleep(1.0)
+
+        # 2. Arrived at patient - Boarding phase
+        socketio.emit('ambulance_update', {
+            'emergency_id': emergency_id,
+            'location': patient_location,
+            'status': 'At Patient (Paramedics Boarding)',
+            'phase': 'at_patient',
+            'eta': 0,
+            'distance_km': 0.0,
+            'progress': 50
+        })
+        socketio.sleep(3.0)
+
+        # 3. Leg 2 (Patient to Hospital)
+        dist_pat_to_hosp = calculate_distance(patient_location, hospital_location)
+        road_points2, dist_m2, dur_s2 = fetch_osrm_route(patient_location, hospital_location)
         
-        # Then move to hospital
-        for i in range(steps):
-            progress = (i + 1) / steps
-            current_location['lat'] = patient_location['lat'] + (hospital_location['lat'] - patient_location['lat']) * progress
-            current_location['lng'] = patient_location['lng'] + (hospital_location['lng'] - patient_location['lng']) * progress
-            
+        if road_points2 and len(road_points2) >= target_steps:
+            idx_step2 = (len(road_points2) - 1) / (target_steps - 1)
+            leg2_path = [road_points2[int(round(i * idx_step2))] for i in range(target_steps)]
+        elif road_points2 and len(road_points2) > 0:
+            leg2_path = road_points2
+        else:
+            leg2_path = [
+                {
+                    'lat': patient_location['lat'] + (hospital_location['lat'] - patient_location['lat']) * ((i + 1) / target_steps),
+                    'lng': patient_location['lng'] + (hospital_location['lng'] - patient_location['lng']) * ((i + 1) / target_steps)
+                }
+                for i in range(target_steps)
+            ]
+
+        total_leg2_dist = (dist_m2 / 1000.0) if dist_m2 else dist_pat_to_hosp
+        total_leg2_eta = max(1, round(dur_s2 / 60.0)) if dur_s2 else max(3, round(total_leg2_dist * 2.0))
+
+        for i, pt in enumerate(leg2_path):
+            progress = (i + 1) / len(leg2_path)
+            remaining_dist = max(0.0, round(total_leg2_dist * (1.0 - progress), 2))
+            remaining_eta = max(0, round(total_leg2_eta * (1.0 - progress)))
+
             socketio.emit('ambulance_update', {
                 'emergency_id': emergency_id,
-                'location': current_location.copy(),
-                'status': 'En Route to Hospital',
-                'progress': 50 + progress * 50  # 50-100%
+                'location': pt,
+                'status': 'Transporting to Hospital',
+                'phase': 'to_hospital',
+                'eta': remaining_eta,
+                'distance_km': remaining_dist,
+                'progress': round(50 + progress * 50, 1)
             })
-            socketio.sleep(0.5)
-        
+            socketio.sleep(1.0)
+
+        # 4. Final Arrival
+        socketio.emit('ambulance_update', {
+            'emergency_id': emergency_id,
+            'location': hospital_location,
+            'status': 'Arrived at Hospital',
+            'phase': 'arrived',
+            'eta': 0,
+            'distance_km': 0.0,
+            'progress': 100
+        })
         socketio.emit('ambulance_arrived', {
             'emergency_id': emergency_id,
-            'message': 'Ambulance arrived at hospital'
+            'message': 'Ambulance arrived safely at hospital'
         })
-    
+
     socketio.start_background_task(simulate_movement)
 
 

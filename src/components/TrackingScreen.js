@@ -53,9 +53,74 @@ const formatAmbulanceAlias = (uuid) => {
 
 function TrackingScreen({ data, onBack }) {
   const [ambulanceLocation, setAmbulanceLocation] = useState(data.ambulance.location);
-  const [ambulanceStatus, setAmbulanceStatus] = useState('En Route');
+  const [ambulanceStatus, setAmbulanceStatus] = useState('En Route to Patient');
+  const [journeyPhase, setJourneyPhase] = useState('to_patient');
+  const [liveEta, setLiveEta] = useState(data.eta || 5);
+  const [liveDistance, setLiveDistance] = useState(data.distance || 2.0);
+  const [countdownSeconds, setCountdownSeconds] = useState((data.eta || 5) * 60);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [patientRoute, setPatientRoute] = useState([]);
+  const [hospitalRoute, setHospitalRoute] = useState([]);
 
+  // Live countdown timer ticking down second-by-second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCountdownSeconds((prev) => {
+        if (prev === null || prev <= 0) return 0;
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Fetch real Google Maps road directions from OSRM
+  useEffect(() => {
+    if (!data?.ambulance?.location || !data?.patient_location || !data?.hospital?.location) return;
+
+    const amb = data.ambulance.location;
+    const pat = data.patient_location;
+    const hosp = data.hospital.location;
+    let isMounted = true;
+
+    const fetchRoadGeometry = async () => {
+      try {
+        // Leg 1: Ambulance to Patient road geometry
+        const res1 = await fetch(
+          `https://router.project-osrm.org/route/v1/driving/${amb.lng},${amb.lat};${pat.lng},${pat.lat}?overview=full&geometries=geojson`
+        );
+        const json1 = await res1.json();
+        if (isMounted && json1?.routes?.[0]) {
+          const coords1 = json1.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+          setPatientRoute(coords1);
+          if (json1.routes[0].duration) {
+            const mins = Math.max(1, Math.round(json1.routes[0].duration / 60));
+            setLiveEta(mins);
+            setCountdownSeconds(mins * 60);
+          }
+          if (json1.routes[0].distance) {
+            setLiveDistance(Number((json1.routes[0].distance / 1000).toFixed(1)));
+          }
+        }
+
+        // Leg 2: Patient to Hospital road geometry
+        const res2 = await fetch(
+          `https://router.project-osrm.org/route/v1/driving/${pat.lng},${pat.lat};${hosp.lng},${hosp.lat}?overview=full&geometries=geojson`
+        );
+        const json2 = await res2.json();
+        if (isMounted && json2?.routes?.[0]) {
+          const coords2 = json2.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+          setHospitalRoute(coords2);
+        }
+      } catch (err) {
+        console.warn('OSRM road directions error:', err);
+      }
+    };
+
+    fetchRoadGeometry();
+    return () => { isMounted = false; };
+  }, [data]);
+
+  // Socket connection for live tracking & dynamic countdown sync
   useEffect(() => {
     const API_BASE_URL = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://aro-backend-tvkq.onrender.com');
     const socket = io(API_BASE_URL);
@@ -77,10 +142,24 @@ function TrackingScreen({ data, onBack }) {
       if (update.status) {
         setAmbulanceStatus(update.status);
       }
+      if (update.phase) {
+        setJourneyPhase(update.phase);
+      }
+      if (update.eta !== undefined) {
+        setLiveEta(update.eta);
+        setCountdownSeconds(update.eta * 60);
+      }
+      if (update.distance_km !== undefined) {
+        setLiveDistance(update.distance_km);
+      }
     });
 
     socket.on('ambulance_arrived', () => {
       setAmbulanceStatus('Arrived at Hospital');
+      setJourneyPhase('arrived');
+      setLiveEta(0);
+      setLiveDistance(0.0);
+      setCountdownSeconds(0);
     });
 
     return () => {
@@ -88,11 +167,16 @@ function TrackingScreen({ data, onBack }) {
     };
   }, [data]);
 
-  const routeCoordinates = [
-    [ambulanceLocation.lat, ambulanceLocation.lng],
-    [data.patient_location.lat, data.patient_location.lng],
-    [data.hospital.location.lat, data.hospital.location.lng]
-  ];
+  const formatCountdown = () => {
+    if (ambulanceStatus.includes('Arrived at Hospital')) return 'Arrived';
+    if (ambulanceStatus.includes('At Patient')) return 'At Patient';
+    if (countdownSeconds && countdownSeconds > 0) {
+      const m = Math.floor(countdownSeconds / 60);
+      const s = countdownSeconds % 60;
+      return m > 0 ? `${m}m ${s < 10 ? '0' : ''}${s}s` : `${s}s`;
+    }
+    return `${liveEta} mins`;
+  };
 
   const center = [data.patient_location.lat, data.patient_location.lng];
 
@@ -119,12 +203,27 @@ function TrackingScreen({ data, onBack }) {
             <div className="info-value">{data.hospital.name}</div>
           </div>
           <div className="info-card highlight">
-            <div className="info-label">ETA</div>
-            <div className="info-value eta">{data.eta} mins</div>
+            <div className="info-label">{journeyPhase === 'to_hospital' ? 'ETA to Hospital' : 'ETA to Patient'}</div>
+            <div className="info-value eta">{formatCountdown()}</div>
           </div>
         </div>
 
-        {/* Middle Section - Map */}
+        {/* Live Google Maps-Style Navigation Bar */}
+        <div className="live-nav-banner">
+          <div className="live-nav-left">
+            <span className="live-pulse-badge">
+              <span className="live-pulse-dot"></span>
+              LIVE TRACKING
+            </span>
+            <span className="live-nav-headline">{ambulanceStatus}</span>
+          </div>
+          <div className="live-nav-right">
+            <span className="live-nav-chip">⏱️ Remaining: <strong>{formatCountdown()}</strong></span>
+            <span className="live-nav-chip">📏 Distance: <strong>{liveDistance} km</strong></span>
+          </div>
+        </div>
+
+        {/* Middle Section - Map with Highlighted Road Directions */}
         <div className="map-section">
           <MapContainer 
             center={center} 
@@ -149,7 +248,57 @@ function TrackingScreen({ data, onBack }) {
               <Popup>{data.hospital.name}</Popup>
             </Marker>
             
-            <Polyline positions={routeCoordinates} color="#3a86ff" weight={4} opacity={0.7} />
+            {/* Google Maps Highlighted Road Directions */}
+            {/* Leg 1: Ambulance to Patient (Google Maps blue road route) */}
+            {patientRoute.length > 0 ? (
+              <>
+                <Polyline 
+                  positions={patientRoute} 
+                  pathOptions={{ color: '#1a73e8', weight: 8, opacity: 0.35, lineCap: 'round', lineJoin: 'round' }} 
+                />
+                <Polyline 
+                  positions={patientRoute} 
+                  pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }} 
+                />
+              </>
+            ) : (
+              <Polyline 
+                positions={[[ambulanceLocation.lat, ambulanceLocation.lng], [data.patient_location.lat, data.patient_location.lng]]} 
+                pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.8 }} 
+              />
+            )}
+
+            {/* Leg 2: Patient to Hospital (Google Maps emerald road route) */}
+            {hospitalRoute.length > 0 ? (
+              <>
+                <Polyline 
+                  positions={hospitalRoute} 
+                  pathOptions={{ 
+                    color: journeyPhase === 'to_hospital' ? '#1a73e8' : '#059669', 
+                    weight: journeyPhase === 'to_hospital' ? 8 : 7, 
+                    opacity: 0.3, 
+                    lineCap: 'round', 
+                    lineJoin: 'round' 
+                  }} 
+                />
+                <Polyline 
+                  positions={hospitalRoute} 
+                  pathOptions={{ 
+                    color: journeyPhase === 'to_hospital' ? '#2563eb' : '#10b981', 
+                    weight: journeyPhase === 'to_hospital' ? 5 : 4, 
+                    dashArray: journeyPhase === 'to_hospital' ? null : '6, 8', 
+                    opacity: 0.95, 
+                    lineCap: 'round', 
+                    lineJoin: 'round' 
+                  }} 
+                />
+              </>
+            ) : (
+              <Polyline 
+                positions={[[data.patient_location.lat, data.patient_location.lng], [data.hospital.location.lat, data.hospital.location.lng]]} 
+                pathOptions={{ color: '#10b981', weight: 4, dashArray: '6, 8', opacity: 0.8 }} 
+              />
+            )}
           </MapContainer>
         </div>
 
@@ -165,7 +314,7 @@ function TrackingScreen({ data, onBack }) {
           <div className="detail-card">
             <div className="detail-icon">📍</div>
             <div className="detail-content">
-              <div className="detail-label">Driver Status</div>
+              <div className="detail-label">Journey Status</div>
               <div className="detail-value">{ambulanceStatus}</div>
             </div>
           </div>
@@ -179,8 +328,8 @@ function TrackingScreen({ data, onBack }) {
           <div className="detail-card">
             <div className="detail-icon">📏</div>
             <div className="detail-content">
-              <div className="detail-label">Distance</div>
-              <div className="detail-value">{data.distance} km</div>
+              <div className="detail-label">{journeyPhase === 'to_hospital' ? 'Distance to Hospital' : 'Distance Remaining'}</div>
+              <div className="detail-value">{liveDistance} km</div>
             </div>
           </div>
         </div>
