@@ -49,8 +49,56 @@ HEADERS = {"x-api-key": BACKENLY_API_KEY}
 
 DEFAULT_HOSPITALS = [
     {
+        "id": "kmc-mangalore",
+        "name": "KMC Hospital Mangalore (Ambedkar Circle)",
+        "location": {"lat": 12.8718, "lng": 74.8425},
+        "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": True,
+        "maternity_ward": True,
+        "beds_available": 45,
+        "specialists": ["cardiologist", "neurologist", "trauma", "pediatrician", "general_physician", "burn", "obstetrician"]
+    },
+    {
+        "id": "fathermuller-mangalore",
+        "name": "Father Muller Medical College Hospital (Kankanady)",
+        "location": {"lat": 12.8631, "lng": 74.8622},
+        "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 60,
+        "specialists": ["cardiologist", "neurologist", "trauma", "obstetrician", "general_physician"]
+    },
+    {
+        "id": "aj-mangalore",
+        "name": "A.J. Hospital & Research Centre (Kuntikan)",
+        "location": {"lat": 12.9056, "lng": 74.8542},
+        "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 35,
+        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician"]
+    },
+    {
+        "id": "wenlock-mangalore",
+        "name": "Wenlock District Hospital (Hampankatta)",
+        "location": {"lat": 12.8672, "lng": 74.8436},
+        "cardiac_icu": False,
+        "neuro_icu": False,
+        "trauma_center": True,
+        "burn_unit": True,
+        "maternity_ward": True,
+        "beds_available": 80,
+        "specialists": ["trauma", "pediatrician", "burn", "general_physician", "obstetrician"]
+    },
+    {
         "id": "3a95708c-35e6-4d34-adc6-18583d160268",
-        "name": "Lifecare Hospital",
+        "name": "Lifecare Hospital Bhatkal",
         "location": {"lat": 13.9645, "lng": 74.5645},
         "cardiac_icu": True,
         "neuro_icu": True,
@@ -65,7 +113,7 @@ DEFAULT_HOSPITALS = [
 DEFAULT_AMBULANCES = [
     {
         "id": "b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0",
-        "location": {"lat": 13.9667, "lng": 74.5667},
+        "location": {"lat": 12.8725, "lng": 74.8440},
         "available": True,
         "phone": "+919110853440",
         "driver_status": "idle",
@@ -672,34 +720,38 @@ def handle_emergency():
     # Find best hospital
     hospitals = fetch_hospitals()
     
-    # HARDCODED ROUTING: Always route to Lifecare Hospital (Peace Hospital ID)
-    best_hospital = next((h for h in hospitals if h['id'] == '3a95708c-35e6-4d34-adc6-18583d160268'), hospitals[0])
-    best_hospital['name'] = 'Lifecare Hospital'
-
-    # Full scoring breakdown for every hospital (eligible or not), for the
-    # Hospital Scoring System panel on the tracking screen. Sorted so the
-    # highest match_score (the one that gets assigned) is first.
+    # Dynamic Real-Time Hospital Recommendation
+    # Score all hospitals based on real distance to patient, emergency requirements, and bed availability
     hospital_scores = [
         score_hospital_breakdown(h, emergency_type, patient_location)
         for h in hospitals
     ]
+    
+    # Highest match_score among eligible facilities wins
+    eligible_scores = [s for s in hospital_scores if s.get('eligible')]
+    if eligible_scores:
+        eligible_scores.sort(key=lambda s: s['match_score'], reverse=True)
+        best_hospital_id = eligible_scores[0]['hospital_id']
+        best_hospital = next(h for h in hospitals if h['id'] == best_hospital_id)
+    else:
+        # Fallback to closest hospital by geographic distance
+        hospitals_by_dist = sorted(hospitals, key=lambda h: calculate_distance(patient_location, h['location']))
+        best_hospital = hospitals_by_dist[0]
+
     hospital_scores.sort(key=lambda s: s['match_score'], reverse=True)
     for s in hospital_scores:
         s['assigned'] = (s['hospital_id'] == best_hospital['id'])
     
-    # Find nearest available ambulance
+    # Find nearest available ambulance to patient
     ambulances = fetch_ambulances()
-    available_ambulances = [a for a in ambulances if a['available']]
+    available_ambulances = [a for a in ambulances if a.get('available', True)]
     if not available_ambulances:
         return jsonify({'error': 'No ambulance available'}), 404
     
-    nearest_ambulance = None
     for a in available_ambulances:
-        if a['id'] == 'b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0':
-            nearest_ambulance = a
-            break
-    if not nearest_ambulance:
-        nearest_ambulance = available_ambulances[0]
+        a['dist_to_patient'] = calculate_distance(patient_location, a['location'])
+    available_ambulances.sort(key=lambda a: a['dist_to_patient'])
+    nearest_ambulance = available_ambulances[0]
     
     # Mark ambulance as unavailable
     nearest_ambulance['available'] = False
@@ -773,11 +825,11 @@ def handle_emergency():
 
 @app.route('/api/hospitals', methods=['GET'])
 def get_hospitals():
-    return jsonify(hospitals)
+    return jsonify(fetch_hospitals())
 
 @app.route('/api/ambulances', methods=['GET'])
 def get_ambulances():
-    return jsonify(ambulances)
+    return jsonify(fetch_ambulances())
 
 # WebSocket for live tracking
 @socketio.on('connect')
@@ -1013,6 +1065,23 @@ def ambulance_status(ambulance_id):
         ambulance['current_emergency_id'] = None
 
     return jsonify({'ok': True})
+
+@app.route('/api/ambulance/<ambulance_id>/location', methods=['POST'])
+def update_ambulance_gps(ambulance_id):
+    data = request.json or {}
+    location = data.get('location')
+    if location and 'lat' in location and 'lng' in location:
+        update_ambulance_status(ambulance_id, {
+            'location_lat': location['lat'],
+            'location_lng': location['lng']
+        })
+        socketio.emit('ambulance_update', {
+            'emergency_id': data.get('emergency_id'),
+            'location': location,
+            'status': data.get('status', 'en_route')
+        })
+        return jsonify({'ok': True})
+    return jsonify({'error': 'Invalid location'}), 400
 
 
 # ============================================================# ============================================================

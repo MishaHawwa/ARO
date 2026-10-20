@@ -22,3 +22,34 @@ body {
   display: flex;
   flex-direction: column;
 }
+
+/* Make Leaflet Routing Machine directions panel completely opaque */
+.leaflet-routing-container,
+.leaflet-routing-alt,
+.leaflet-bar,
+.leaflet-routing-geocoders {
+  background-color: #ffffff !important;
+  background: #ffffff !important;
+  opacity: 1 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18) !important;
+  border: 1px solid #dcdcdc !important;
+  color: #222222 !important;
+  max-width: 340px !important;
+}
+
+.leaflet-routing-alt table,
+.leaflet-routing-alt tbody,
+.leaflet-routing-alt tr,
+.leaflet-routing-alt td {
+  background-color: #ffffff !important;
+  background: #ffffff !important;
+  color: #333333 !important;
+}
+
+.leaflet-routing-alt h2,
+.leaflet-routing-alt h3 {
+  color: #1565c0 !important;
+  font-weight: bold !important;
+  margin-top: 4px !important;
+}
