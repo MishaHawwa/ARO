@@ -83,8 +83,20 @@ def get_allowed_origins():
     return origins
 
 ALLOWED_ORIGINS = get_allowed_origins()
-CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}})
-socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get('Origin')
+    if origin:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, x-api-key, X-Requested-With'
+    else:
+        response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 import requests
 
 BACKENLY_PROJECT_ID = "01db9ccd-417e-457e-8073-e7bccdca3e63"
