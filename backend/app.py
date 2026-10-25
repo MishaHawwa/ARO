@@ -86,17 +86,36 @@ ALLOWED_ORIGINS = get_allowed_origins()
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
+@app.before_request
+def handle_preflight():
+    if request.method == 'OPTIONS':
+        response = app.make_default_options_response()
+        origin = request.headers.get('Origin', '*')
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, x-api-key, X-Requested-With'
+        return response
+
 @app.after_request
 def add_cors_headers(response):
     origin = request.headers.get('Origin')
     if origin:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, x-api-key, X-Requested-With'
     else:
         response.headers['Access-Control-Allow-Origin'] = '*'
     return response
+
+@app.route('/api/health', methods=['GET', 'OPTIONS'])
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'service': 'aro-backend',
+        'timestamp': get_utc_iso()
+    })
 import requests
 
 BACKENLY_PROJECT_ID = "01db9ccd-417e-457e-8073-e7bccdca3e63"
