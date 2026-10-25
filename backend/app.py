@@ -5,10 +5,11 @@ except ImportError:
     pass
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+import secrets
 import math
 import os
 import uuid
@@ -38,8 +39,52 @@ def handle_exception(e):
     import traceback
     return jsonify({"error": "Internal Server Error", "traceback": traceback.format_exc()}), 500
 
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+_ambulance_rate_limits = {}
+
+def get_utc_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+def validate_coordinates(lat, lng):
+    """Validate latitude and longitude ranges."""
+    try:
+        lat_f = float(lat)
+        lng_f = float(lng)
+    except (TypeError, ValueError):
+        return False, None, None
+    if not (-90.0 <= lat_f <= 90.0 and -180.0 <= lng_f <= 180.0):
+        return False, None, None
+    return True, lat_f, lng_f
+
+def get_allowed_origins():
+    origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "https://aro-backend-tvkq.onrender.com",
+        "http://localhost",
+        "capacitor://localhost"
+    ]
+    env_cors = os.environ.get("CORS_ORIGINS")
+    if env_cors:
+        for orig in env_cors.split(","):
+            cleaned = orig.strip()
+            if cleaned and cleaned not in origins:
+                origins.append(cleaned)
+    frontend_url = os.environ.get("FRONTEND_URL") or os.environ.get("REACT_APP_API_URL")
+    if frontend_url and frontend_url.strip() not in origins:
+        origins.append(frontend_url.strip())
+    amb_url = os.environ.get("AMBULANCE_APP_URL") or os.environ.get("VITE_API_BASE_URL")
+    if amb_url and amb_url.strip() not in origins:
+        origins.append(amb_url.strip())
+    if os.environ.get("ALLOW_ALL_ORIGINS", "").lower() in ("true", "1") or os.environ.get("FLASK_ENV") == "development":
+        return "*"
+    return origins
+
+ALLOWED_ORIGINS = get_allowed_origins()
+CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}})
+socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS)
 import requests
 
 BACKENLY_PROJECT_ID = "01db9ccd-417e-457e-8073-e7bccdca3e63"
@@ -925,6 +970,7 @@ def handle_emergency():
     
     # Mark ambulance as allocated
     emergency_id = str(uuid.uuid4())
+    tracking_token = secrets.token_urlsafe(24)
     nearest_ambulance['available'] = False
     nearest_ambulance['current_emergency_id'] = emergency_id
     nearest_ambulance['driver_status'] = 'notified'
@@ -971,6 +1017,7 @@ def handle_emergency():
     
     response = {
         'emergency_id': emergency_id,
+        'tracking_token': tracking_token,
         'emergency_type': emergency_type,
         'severity': emergency_details.get('severity', 'High'),
         'hospital': {
@@ -997,6 +1044,7 @@ def handle_emergency():
     # Record active emergency in memory
     ACTIVE_EMERGENCIES[emergency_id] = {
         'emergency_id': emergency_id,
+        'tracking_token': tracking_token,
         'ambulance_id': nearest_ambulance['id'],
         'patient_location': patient_location,
         'hospital': response['hospital'],
@@ -1009,7 +1057,20 @@ def handle_emergency():
         'phase': 'to_patient',
         'driver_status': 'notified',
         'eta': eta_to_patient,
-        'distance_km': round(distance_to_patient, 2)
+        'distance_km': round(distance_to_patient, 2),
+        'tracking': {
+            'status': 'waiting',
+            'latest_location': {
+                'lat': nearest_ambulance['location']['lat'],
+                'lng': nearest_ambulance['location']['lng'],
+                'accuracy': None,
+                'heading': None,
+                'speed': None
+            },
+            'device_timestamp': None,
+            'server_timestamp': time.time(),
+            'last_update_iso': get_utc_iso()
+        }
     }
 
     # Notify the ambulance driver app in real time
@@ -1049,11 +1110,18 @@ def fetch_osrm_route(start_loc, end_loc):
         print(f"[OSRM Route Fast Fallback]: {e}")
     return None, None, None
 
-# WebSocket for live tracking
+# ============================================================
+# REAL-TIME GPS TRACKING & SOCKET.IO ENGINE
+# ============================================================
+
 @socketio.on('connect')
 def handle_connect():
-    print('Client connected')
-    emit('connected', {'data': 'Connected to server'})
+    print('[Socket] Client connected')
+    emit('connected', {'data': 'Connected to server', 'timestamp': get_utc_iso()})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('[Socket] Client disconnected')
 
 def process_ambulance_status_change(ambulance_id, emergency_id, status):
     """Processes driver mission state transitions and streams real-time updates."""
@@ -1083,6 +1151,8 @@ def process_ambulance_status_change(ambulance_id, emergency_id, status):
         if active:
             active['phase'] = 'arrived'
             active['status'] = display_status
+            if 'tracking' in active:
+                active['tracking']['status'] = 'stopped'
     elif status in ['accepted', 'en_route_to_patient']:
         phase = 'to_patient'
         display_status = 'En Route to Patient'
@@ -1103,30 +1173,56 @@ def process_ambulance_status_change(ambulance_id, emergency_id, status):
         remaining_eta = max(1, round(remaining_dist * 2.0))
 
     payload = {
+        'emergencyId': emergency_id,
         'emergency_id': emergency_id,
+        'ambulanceId': ambulance_id,
         'ambulance_id': ambulance_id,
         'location': ambulance.get('location'),
+        'latitude': ambulance.get('location', {}).get('lat'),
+        'longitude': ambulance.get('location', {}).get('lng'),
         'status': display_status,
         'phase': phase,
         'eta': 0 if phase == 'arrived' else (remaining_eta or (active.get('eta') if active else 5)),
+        'distanceKm': 0.0 if phase == 'arrived' else (remaining_dist or (active.get('distance_km') if active else 2.0)),
         'distance_km': 0.0 if phase == 'arrived' else (remaining_dist or (active.get('distance_km') if active else 2.0)),
-        'is_realtime': True
+        'isRealtime': True,
+        'is_realtime': True,
+        'timestamp': get_utc_iso()
     }
 
-    socketio.emit('ambulance_update', payload)
     if emergency_id:
+        socketio.emit('ambulance:location:updated', payload, room=f"emergency:{emergency_id}")
+        socketio.emit('ambulance:location:updated', payload, room=f"emergency_{emergency_id}")
+        socketio.emit('ambulance_update', payload, room=f"emergency:{emergency_id}")
         socketio.emit('ambulance_update', payload, room=f"emergency_{emergency_id}")
+    socketio.emit('ambulance:location:updated', payload, room=f"ambulance:{ambulance_id}")
+    socketio.emit('ambulance:location:updated', payload, room=f"ambulance_{ambulance_id}")
 
     if phase == 'arrived':
-        socketio.emit('ambulance_arrived', {
+        arrived_payload = {
+            'emergencyId': emergency_id,
             'emergency_id': emergency_id,
-            'message': 'Ambulance arrived safely at hospital'
-        })
+            'message': 'Ambulance arrived safely at hospital',
+            'timestamp': get_utc_iso()
+        }
         if emergency_id:
-            socketio.emit('ambulance_arrived', {
+            socketio.emit('ambulance_arrived', arrived_payload, room=f"emergency:{emergency_id}")
+            socketio.emit('ambulance_arrived', arrived_payload, room=f"emergency_{emergency_id}")
+            socketio.emit('tracking:stopped', {
+                'emergencyId': emergency_id,
                 'emergency_id': emergency_id,
-                'message': 'Ambulance arrived safely at hospital'
+                'ambulanceId': ambulance_id,
+                'reason': 'arrived_at_hospital',
+                'timestamp': get_utc_iso()
+            }, room=f"emergency:{emergency_id}")
+            socketio.emit('tracking:stopped', {
+                'emergencyId': emergency_id,
+                'emergency_id': emergency_id,
+                'ambulanceId': ambulance_id,
+                'reason': 'arrived_at_hospital',
+                'timestamp': get_utc_iso()
             }, room=f"emergency_{emergency_id}")
+
         ambulance['available'] = True
         ambulance['current_emergency_id'] = None
         ambulance['driver_status'] = 'idle'
@@ -1139,100 +1235,364 @@ def process_ambulance_status_change(ambulance_id, emergency_id, status):
     return {'ok': True, 'status': status}
 
 
-@socketio.on('start_tracking')
-def handle_tracking(data):
-    emergency_id = data.get('emergency_id')
-    if not emergency_id:
-        return
-        
-    join_room(f"emergency_{emergency_id}")
-    print(f"[Socket] Client joined tracking room for emergency_{emergency_id}")
+def process_location_update(data):
+    """
+    Core validation and ingestion pipeline for live ambulance GPS coordinates.
+    1. Authenticates & verifies active ambulance assignment
+    2. Validates latitude [-90, 90] and longitude [-180, 180]
+    3. Drops out-of-order and excessively stale (>90s) updates
+    4. Filters impossible jumps (>250 km/h)
+    5. Applies sensible rate limits
+    6. Persists latest accepted position
+    7. Emits to authorized emergency room only
+    """
+    if not isinstance(data, dict):
+        return False, {'code': 'INVALID_PAYLOAD', 'message': 'Payload must be a dictionary'}
 
+    amb_id = data.get('ambulanceId') or data.get('ambulance_id')
+    emergency_id = data.get('emergencyId') or data.get('emergency_id')
+    tracking_token = data.get('trackingToken') or data.get('tracking_token')
+
+    # Extract coordinates
+    lat = data.get('latitude')
+    lng = data.get('longitude')
+    if lat is None or lng is None:
+        loc = data.get('location')
+        if isinstance(loc, dict):
+            lat = loc.get('lat') if loc.get('lat') is not None else loc.get('latitude')
+            lng = loc.get('lng') if loc.get('lng') is not None else loc.get('longitude')
+
+    valid_coords, lat, lng = validate_coordinates(lat, lng)
+    if not valid_coords:
+        return False, {'code': 'INVALID_COORDINATES', 'message': f'Coordinates ({lat}, {lng}) outside valid range [-90..90, -180..180]'}
+
+    # Find emergency
     active = ACTIVE_EMERGENCIES.get(emergency_id)
-    amb_id = active.get('ambulance_id') if active else None
-    amb = None
-    if amb_id:
-        amb = next((a for a in fetch_ambulances() if a['id'] == amb_id), None)
-
-    current_loc = (amb and amb.get('location')) or (active and active.get('ambulance_location')) or data.get('ambulance_location')
-    current_status = (active and active.get('status')) or 'Ambulance Dispatched'
-    current_phase = (active and active.get('phase')) or 'to_patient'
-    eta = (active and active.get('eta')) or 5
-    dist = (active and active.get('distance_km')) or 2.1
-
-    # Emit real initial state once to caller - NO fake movement simulation!
-    emit('ambulance_update', {
-        'emergency_id': emergency_id,
-        'location': current_loc,
-        'status': current_status,
-        'phase': current_phase,
-        'eta': eta,
-        'distance_km': dist,
-        'is_realtime': True
-    })
-
-@socketio.on('driver_location_update')
-def handle_driver_location_update(data):
-    amb_id = data.get('ambulance_id')
-    emergency_id = data.get('emergency_id')
-    loc = data.get('location')
-    driver_status = data.get('status', 'en_route')
-    if not loc or not isinstance(loc, dict) or 'lat' not in loc or 'lng' not in loc:
-        return
-
-    # Update ambulance location in memory cache
-    for a in fetch_ambulances():
-        if a['id'] == amb_id:
-            a['location'] = loc
-
-    active = ACTIVE_EMERGENCIES.get(emergency_id)
-    if not active and emergency_id:
+    if not active and amb_id:
         for e_id, e_info in ACTIVE_EMERGENCIES.items():
             if e_info.get('ambulance_id') == amb_id:
                 active = e_info
                 emergency_id = e_id
                 break
 
-    phase = active.get('phase', 'to_patient') if active else ('to_hospital' if driver_status == 'en_route_to_hospital' else 'to_patient')
+    if not active:
+        return False, {'code': 'EMERGENCY_NOT_FOUND', 'message': f'No active emergency found for ID: {emergency_id}'}
+
+    # 1. Assignment check: must be assigned ambulance
+    if active.get('ambulance_id') != amb_id:
+        return False, {'code': 'UNAUTHORIZED_AMBULANCE', 'message': f'Ambulance {amb_id} is not assigned to emergency {emergency_id}'}
+
+    # 2. Token check if present
+    if active.get('tracking_token') and tracking_token and active['tracking_token'] != tracking_token:
+        return False, {'code': 'UNAUTHORIZED', 'message': 'Invalid tracking authorization token'}
+
+    now_time = time.time()
+
+    # 3. Rate limiting: max 1 update per 0.7s per ambulance
+    last_rate_time = _ambulance_rate_limits.get(amb_id, 0.0)
+    if (now_time - last_rate_time) < 0.7:
+        return False, {'code': 'RATE_LIMITED', 'throttled': True, 'message': 'Update rate limit exceeded (max 1 per 0.7s)'}
+
+    # 4. Device timestamp & out-of-order check
+    tracking = active.setdefault('tracking', {
+        'status': 'live',
+        'latest_location': {},
+        'device_timestamp': None,
+        'server_timestamp': None,
+        'last_update_iso': None
+    })
+
+    raw_ts = data.get('timestamp') or data.get('device_timestamp')
+    parsed_device_ts = None
+    if raw_ts:
+        try:
+            if isinstance(raw_ts, (int, float)):
+                parsed_device_ts = float(raw_ts) / 1000.0 if raw_ts > 1e11 else float(raw_ts)
+            elif isinstance(raw_ts, str):
+                dt = datetime.fromisoformat(raw_ts.replace('Z', '+00:00'))
+                parsed_device_ts = dt.timestamp()
+        except Exception:
+            pass
+
+    if parsed_device_ts:
+        if (now_time - parsed_device_ts) > 90.0:
+            return False, {'code': 'STALE_READING', 'message': 'Location reading is older than 90 seconds'}
+        prev_device_ts = tracking.get('device_timestamp')
+        if prev_device_ts and (parsed_device_ts < prev_device_ts - 0.5):
+            return False, {'code': 'OUT_OF_ORDER', 'message': 'Out of order GPS reading dropped'}
+
+    # 5. Plausibility / jump check (only between consecutive device GPS updates)
+    prev_loc = tracking.get('latest_location')
+    prev_device_ts = tracking.get('device_timestamp')
+    if prev_device_ts and prev_loc and 'lat' in prev_loc and 'lng' in prev_loc:
+        dist_jump_km = calculate_distance({'lat': lat, 'lng': lng}, {'lat': prev_loc['lat'], 'lng': prev_loc['lng']})
+        time_delta_s = max(0.2, (parsed_device_ts - prev_device_ts) if parsed_device_ts else (now_time - (tracking.get('server_timestamp') or now_time)))
+        implied_speed_kmh = (dist_jump_km / (time_delta_s / 3600.0))
+        if implied_speed_kmh > 250.0 and dist_jump_km > 1.0:
+            return False, {'code': 'IMPOSSIBLE_JUMP', 'message': f'Implied speed {round(implied_speed_kmh)} km/h exceeds 250 km/h threshold'}
+
+    # Reading accepted - record rate limit timestamp
+    _ambulance_rate_limits[amb_id] = now_time
+
+    # Extract accuracy, heading, speed
+    accuracy = data.get('accuracy')
+    heading = data.get('heading')
+    speed = data.get('speed')
+    try:
+        accuracy = round(float(accuracy), 1) if accuracy is not None else None
+    except (ValueError, TypeError):
+        accuracy = None
+    try:
+        heading = round(float(heading), 1) if heading is not None else None
+    except (ValueError, TypeError):
+        heading = None
+    try:
+        speed = round(float(speed), 1) if speed is not None else None
+    except (ValueError, TypeError):
+        speed = None
+
+    # Update in-memory state
+    current_loc_dict = {
+        'lat': lat,
+        'lng': lng,
+        'accuracy': accuracy,
+        'heading': heading,
+        'speed': speed
+    }
+    for a in fetch_ambulances():
+        if a['id'] == amb_id:
+            a['location'] = {'lat': lat, 'lng': lng}
+
+    tracking['status'] = 'live'
+    tracking['latest_location'] = current_loc_dict
+    tracking['device_timestamp'] = parsed_device_ts or now_time
+    tracking['server_timestamp'] = now_time
+    iso_timestamp = get_utc_iso()
+    tracking['last_update_iso'] = iso_timestamp
+
+    active['ambulance_location'] = {'lat': lat, 'lng': lng}
+
+    # Determine Phase, target, ETA & remaining distance
+    phase = active.get('phase', 'to_patient')
+    driver_status = data.get('status')
+    if driver_status in ['en_route_to_hospital', 'picked_up']:
+        phase = 'to_hospital'
+        active['phase'] = 'to_hospital'
+
     target = None
     display_status = 'En Route to Patient'
-
-    if active:
-        active['ambulance_location'] = loc
-        if phase == 'to_hospital':
-            target = active.get('hospital_location')
-            display_status = f"Transporting to {active.get('hospital_name', 'Hospital')}"
-        else:
-            target = active.get('patient_location')
-            display_status = 'En Route to Patient'
+    if phase == 'to_hospital':
+        target = active.get('hospital_location')
+        display_status = f"Transporting to {active.get('hospital_name', 'Hospital')}"
+    else:
+        target = active.get('patient_location')
+        display_status = 'En Route to Patient'
 
     remaining_dist = None
     remaining_eta = None
     if target and 'lat' in target and 'lng' in target:
-        remaining_dist = round(calculate_distance(loc, target), 2)
+        remaining_dist = round(calculate_distance({'lat': lat, 'lng': lng}, target), 2)
         remaining_eta = max(1, round(remaining_dist * 2.0))
-        if active:
-            active['distance_km'] = remaining_dist
-            active['eta'] = remaining_eta
+        active['distance_km'] = remaining_dist
+        active['eta'] = remaining_eta
 
     payload = {
-        'emergency_id': emergency_id,
+        'ambulanceId': amb_id,
         'ambulance_id': amb_id,
-        'location': loc,
+        'emergencyId': emergency_id,
+        'emergency_id': emergency_id,
+        'latitude': lat,
+        'longitude': lng,
+        'location': {'lat': lat, 'lng': lng},
+        'accuracy': accuracy,
+        'heading': heading,
+        'speed': speed,
+        'timestamp': iso_timestamp,
         'status': display_status,
         'phase': phase,
-        'eta': remaining_eta if remaining_eta is not None else 5,
-        'distance_km': remaining_dist if remaining_dist is not None else 2.0,
+        'eta': remaining_eta if remaining_eta is not None else active.get('eta', 5),
+        'distanceKm': remaining_dist if remaining_dist is not None else active.get('distance_km', 2.0),
+        'distance_km': remaining_dist if remaining_dist is not None else active.get('distance_km', 2.0),
+        'isRealtime': True,
         'is_realtime': True
     }
-    socketio.emit('ambulance_update', payload)
-    if emergency_id:
-        socketio.emit('ambulance_update', payload, room=f"emergency_{emergency_id}")
+
+    # Emit ONLY to the authorized emergency tracking rooms (no global broadcast!)
+    socketio.emit('ambulance:location:updated', payload, room=f"emergency:{emergency_id}")
+    socketio.emit('ambulance:location:updated', payload, room=f"emergency_{emergency_id}")
+    socketio.emit('ambulance_update', payload, room=f"emergency:{emergency_id}")
+    socketio.emit('ambulance_update', payload, room=f"emergency_{emergency_id}")
+
+    # Also emit to ambulance driver room
+    socketio.emit('ambulance:location:updated', payload, room=f"ambulance:{amb_id}")
+    socketio.emit('ambulance:location:updated', payload, room=f"ambulance_{amb_id}")
+
+    # Async persist location to database / Backenly
+    update_ambulance_status(amb_id, {'location_lat': lat, 'location_lng': lng})
+
+    return True, payload
+
+
+@socketio.on('tracking:subscribe')
+def handle_tracking_subscribe(data):
+    """Client subscribes to an authorized emergency tracking room and receives the latest snapshot."""
+    if not isinstance(data, dict):
+        emit('tracking:error', {'code': 'INVALID_PAYLOAD', 'message': 'Payload must be a dictionary'})
+        return
+    emergency_id = data.get('emergencyId') or data.get('emergency_id')
+    tracking_token = data.get('trackingToken') or data.get('tracking_token')
+
+    if not emergency_id:
+        emit('tracking:error', {'code': 'MISSING_EMERGENCY_ID', 'message': 'emergency_id is required'})
+        return
+
+    active = ACTIVE_EMERGENCIES.get(emergency_id)
+    if not active:
+        emit('tracking:error', {'code': 'EMERGENCY_NOT_FOUND', 'message': f'Emergency {emergency_id} not active'})
+        return
+
+    if active.get('tracking_token') and tracking_token:
+        if active['tracking_token'] != tracking_token:
+            emit('tracking:error', {'code': 'UNAUTHORIZED', 'message': 'Invalid tracking authorization token'})
+            return
+
+    join_room(f"emergency:{emergency_id}")
+    join_room(f"emergency_{emergency_id}")
+    print(f"[Socket] Client joined tracking room for emergency:{emergency_id}")
+
+    amb_id = active.get('ambulance_id')
+    amb = next((a for a in fetch_ambulances() if a['id'] == amb_id), None)
+    tracking_info = active.get('tracking', {})
+    latest_loc = tracking_info.get('latest_location') or (amb and amb.get('location')) or active.get('ambulance_location') or {'lat': 12.8725, 'lng': 74.8440}
+    tracking_status = tracking_info.get('status', 'waiting')
+
+    snapshot = {
+        'emergencyId': emergency_id,
+        'emergency_id': emergency_id,
+        'ambulanceId': amb_id,
+        'ambulance_id': amb_id,
+        'location': latest_loc,
+        'latitude': latest_loc.get('lat') if isinstance(latest_loc, dict) else None,
+        'longitude': latest_loc.get('lng') if isinstance(latest_loc, dict) else None,
+        'accuracy': latest_loc.get('accuracy') if isinstance(latest_loc, dict) else None,
+        'heading': latest_loc.get('heading') if isinstance(latest_loc, dict) else None,
+        'speed': latest_loc.get('speed') if isinstance(latest_loc, dict) else None,
+        'status': active.get('status', 'Ambulance Dispatched'),
+        'phase': active.get('phase', 'to_patient'),
+        'eta': active.get('eta', 5),
+        'distanceKm': active.get('distance_km', 2.0),
+        'distance_km': active.get('distance_km', 2.0),
+        'trackingStatus': tracking_status,
+        'tracking_status': tracking_status,
+        'timestamp': tracking_info.get('last_update_iso') or get_utc_iso(),
+        'isRealtime': True,
+        'is_realtime': True
+    }
+    emit('tracking:initial_state', snapshot)
+    emit('ambulance_update', snapshot)
+
+
+@socketio.on('start_tracking')
+def handle_start_tracking(data):
+    """Backwards-compatible alias for tracking:subscribe."""
+    handle_tracking_subscribe(data)
+
+
+@socketio.on('tracking:start')
+def handle_tracking_start(data):
+    """Ambulance operator signals start of active GPS streaming."""
+    if not isinstance(data, dict):
+        emit('tracking:error', {'code': 'INVALID_PAYLOAD', 'message': 'Payload must be a dictionary'})
+        return
+    emergency_id = data.get('emergencyId') or data.get('emergency_id')
+    amb_id = data.get('ambulanceId') or data.get('ambulance_id')
+    tracking_token = data.get('trackingToken') or data.get('tracking_token')
+
+    if not emergency_id or not amb_id:
+        emit('tracking:error', {'code': 'MISSING_FIELDS', 'message': 'emergency_id and ambulance_id required'})
+        return
+
+    active = ACTIVE_EMERGENCIES.get(emergency_id)
+    if not active:
+        emit('tracking:error', {'code': 'EMERGENCY_NOT_FOUND', 'message': 'Emergency not active'})
+        return
+
+    if active.get('ambulance_id') != amb_id:
+        emit('tracking:error', {'code': 'UNAUTHORIZED_AMBULANCE', 'message': 'Ambulance not assigned to this emergency'})
+        return
+
+    if active.get('tracking_token') and tracking_token and active['tracking_token'] != tracking_token:
+        emit('tracking:error', {'code': 'UNAUTHORIZED', 'message': 'Invalid tracking token'})
+        return
+
+    tracking = active.setdefault('tracking', {})
+    tracking['status'] = 'live'
+
+    payload = {
+        'emergencyId': emergency_id,
+        'emergency_id': emergency_id,
+        'ambulanceId': amb_id,
+        'ambulance_id': amb_id,
+        'status': 'live',
+        'startedAt': get_utc_iso()
+    }
+    emit('tracking:started', payload)
+    socketio.emit('tracking:started', payload, room=f"emergency:{emergency_id}")
+    socketio.emit('tracking:started', payload, room=f"emergency_{emergency_id}")
+    print(f"[Tracking] GPS sharing started for emergency {emergency_id} by ambulance {amb_id}")
+
+
+@socketio.on('ambulance:location:update')
+def handle_ambulance_location_update(data):
+    """Main real-time GPS coordinate ingestion handler from the Ambulance App."""
+    success, res = process_location_update(data)
+    if not success:
+        emit('tracking:error', res)
+    else:
+        emit('ambulance:location:ack', {'ok': True, 'timestamp': res.get('timestamp')})
+
+
+@socketio.on('driver_location_update')
+def handle_driver_location_update(data):
+    """Backwards-compatible alias for ambulance:location:update."""
+    success, res = process_location_update(data)
+    if not success:
+        emit('tracking:error', res)
+
+
+@socketio.on('tracking:stop')
+def handle_tracking_stop(data):
+    """Ambulance operator signals stop of active GPS sharing."""
+    if not isinstance(data, dict):
+        return
+    emergency_id = data.get('emergencyId') or data.get('emergency_id')
+    amb_id = data.get('ambulanceId') or data.get('ambulance_id')
+    reason = data.get('reason', 'stopped_by_driver')
+
+    active = ACTIVE_EMERGENCIES.get(emergency_id)
+    if active:
+        if active.get('ambulance_id') == amb_id or not amb_id:
+            tracking = active.setdefault('tracking', {})
+            tracking['status'] = 'stopped'
+            payload = {
+                'emergencyId': emergency_id,
+                'emergency_id': emergency_id,
+                'ambulanceId': amb_id or active.get('ambulance_id'),
+                'ambulance_id': amb_id or active.get('ambulance_id'),
+                'status': 'stopped',
+                'reason': reason,
+                'timestamp': get_utc_iso()
+            }
+            emit('tracking:stopped', payload)
+            socketio.emit('tracking:stopped', payload, room=f"emergency:{emergency_id}")
+            socketio.emit('tracking:stopped', payload, room=f"emergency_{emergency_id}")
+            print(f"[Tracking] GPS sharing stopped for emergency {emergency_id}")
+
 
 @socketio.on('driver_status_update')
 def handle_driver_status_update(data):
-    amb_id = data.get('ambulance_id')
-    emergency_id = data.get('emergency_id')
+    amb_id = data.get('ambulance_id') or data.get('ambulanceId')
+    emergency_id = data.get('emergency_id') or data.get('emergencyId')
     status = data.get('status')
     if amb_id and status:
         process_ambulance_status_change(amb_id, emergency_id, status)
@@ -1264,13 +1624,10 @@ print(f"[TWILIO CONFIG] SID={bool(TWILIO_SID)} TOKEN={bool(TWILIO_TOKEN)} FROM={
 
 def call_ambulance_fallback(ambulance, response):
     """Places an automated call to the driver reading out the job."""
-    # User requested to mock this by calling their number: +919110853440
-    target_number = "+919110853440" # Mock number requested by user
-    
+    target_number = "+919110853440"
     if not TWILIO_SID or not TWILIO_TOKEN:
         print(f"[Ambulance Call Mock] Twilio not configured - would have called {target_number}")
         return
-        
     if not TWILIO_FROM:
         print(f"[Ambulance Call] ERROR: Twilio From Number is missing!")
         return
@@ -1302,19 +1659,23 @@ def notify_ambulance(ambulance, response):
     """Push the new job to the driver app in real time, and immediately call."""
     job_payload = {
         'emergency_id': response['emergency_id'],
+        'emergencyId': response['emergency_id'],
+        'tracking_token': response.get('tracking_token'),
+        'trackingToken': response.get('tracking_token'),
         'emergency_type': response['emergency_type'],
         'severity': response['severity'],
         'patient_location': response['patient_location'],
         'hospital': response['hospital'],
         'eta': response['eta'],
         'distance': response.get('distance', 2.0),
-        'ambulance_id': ambulance['id']
+        'ambulance_id': ambulance['id'],
+        'ambulanceId': ambulance['id']
     }
+    socketio.emit('new_assignment', job_payload, room=f"ambulance:{ambulance['id']}")
     socketio.emit('new_assignment', job_payload, room=f"ambulance_{ambulance['id']}")
     socketio.emit('new_assignment', job_payload)
     print(f"[Ambulance] Notified {ambulance['id']} of {response['emergency_id']}")
 
-    # Call immediately as requested
     def make_call():
         call_ambulance_fallback(ambulance, response)
 
@@ -1322,15 +1683,17 @@ def notify_ambulance(ambulance, response):
 
 @socketio.on('join_ambulance')
 def handle_join_ambulance(data):
-    ambulance_id = data.get('ambulance_id')
+    ambulance_id = data.get('ambulance_id') or data.get('ambulanceId')
     if ambulance_id:
+        join_room(f"ambulance:{ambulance_id}")
         join_room(f"ambulance_{ambulance_id}")
         emit('joined', {'ambulance_id': ambulance_id})
 
 @socketio.on('join_hospital')
 def handle_join_hospital(data):
-    hospital_id = data.get('hospital_id')
+    hospital_id = data.get('hospital_id') or data.get('hospitalId')
     if hospital_id:
+        join_room(f"hospital:{hospital_id}")
         join_room(f"hospital_{hospital_id}")
         emit('joined', {'hospital_id': hospital_id})
 
@@ -1338,7 +1701,7 @@ def handle_join_hospital(data):
 def ambulance_respond(ambulance_id):
     data = request.json or {}
     accepted = data.get('accepted', True)
-    emergency_id = data.get('emergency_id')
+    emergency_id = data.get('emergency_id') or data.get('emergencyId')
     
     ambulances = fetch_ambulances()
     ambulance = next((a for a in ambulances if a['id'] == ambulance_id), None)
@@ -1362,13 +1725,26 @@ def ambulance_respond(ambulance_id):
             'current_emergency_id': None
         })
         
-        # Find next nearest ambulance
-        ambulances = fetch_ambulances() # Refresh
-        available_ambulances = [a for a in ambulances if a.get('available', True)]
+        # Stop tracking for the declined ambulance
+        if emergency_id:
+            decline_stop_payload = {
+                'emergencyId': emergency_id,
+                'emergency_id': emergency_id,
+                'ambulanceId': ambulance_id,
+                'ambulance_id': ambulance_id,
+                'reason': 'ambulance_declined',
+                'timestamp': get_utc_iso()
+            }
+            socketio.emit('tracking:stopped', decline_stop_payload, room=f"emergency:{emergency_id}")
+            socketio.emit('tracking:stopped', decline_stop_payload, room=f"emergency_{emergency_id}")
+
+        # Find next nearest ambulance excluding the declined one
+        ambulances = fetch_ambulances()
+        available_ambulances = [a for a in ambulances if a.get('available', True) and a['id'] != ambulance_id]
         if not available_ambulances:
             for a in ambulances:
                 a['available'] = True
-            available_ambulances = ambulances
+            available_ambulances = [a for a in ambulances if a['id'] != ambulance_id] or ambulances
             
         patient_location = data.get('patient_location', {'lat': 12.8725, 'lng': 74.8440})
         
@@ -1384,14 +1760,59 @@ def ambulance_respond(ambulance_id):
             'driver_status': 'notified'
         })
         
+        # Preserve tracking token for the new ambulance assignment
+        active = ACTIVE_EMERGENCIES.get(emergency_id)
+        current_token = active.get('tracking_token') if active else secrets.token_urlsafe(24)
+
+        if active:
+            active['ambulance_id'] = nearest_ambulance['id']
+            active['ambulance_location'] = nearest_ambulance['location'].copy()
+            active['driver_status'] = 'notified'
+            active['status'] = 'Rerouted to Next Ambulance'
+            active['tracking'] = {
+                'status': 'waiting',
+                'latest_location': nearest_ambulance['location'].copy(),
+                'device_timestamp': None,
+                'server_timestamp': time.time(),
+                'last_update_iso': get_utc_iso()
+            }
+            
+            reroute_payload = {
+                'emergencyId': emergency_id,
+                'emergency_id': emergency_id,
+                'ambulanceId': nearest_ambulance['id'],
+                'ambulance_id': nearest_ambulance['id'],
+                'ambulanceName': nearest_ambulance.get('name', 'Ambulance Unit'),
+                'ambulance_name': nearest_ambulance.get('name', 'Ambulance Unit'),
+                'location': nearest_ambulance['location'],
+                'latitude': nearest_ambulance['location']['lat'],
+                'longitude': nearest_ambulance['location']['lng'],
+                'status': 'Rerouted to Next Ambulance',
+                'phase': 'to_patient',
+                'eta': data.get('eta', 10),
+                'distanceKm': data.get('distance', 2.0),
+                'distance_km': data.get('distance', 2.0),
+                'trackingStatus': 'waiting',
+                'tracking_status': 'waiting',
+                'rerouted': True,
+                'timestamp': get_utc_iso()
+            }
+            socketio.emit('ambulance:location:updated', reroute_payload, room=f"emergency:{emergency_id}")
+            socketio.emit('ambulance:location:updated', reroute_payload, room=f"emergency_{emergency_id}")
+            socketio.emit('ambulance_update', reroute_payload, room=f"emergency:{emergency_id}")
+            socketio.emit('ambulance_update', reroute_payload, room=f"emergency_{emergency_id}")
+
         response_data = {
             'emergency_id': emergency_id,
+            'emergencyId': emergency_id,
             'emergency_type': data.get('emergency_type', 'Emergency'),
             'severity': data.get('severity', 'High'),
             'patient_location': patient_location,
             'hospital': data.get('hospital', {}),
             'eta': data.get('eta', 10),
-            'distance': data.get('distance', 2.0)
+            'distance': data.get('distance', 2.0),
+            'tracking_token': current_token,
+            'trackingToken': current_token
         }
         
         notify_ambulance(nearest_ambulance, response_data)
@@ -1405,7 +1826,7 @@ def ambulance_status(ambulance_id):
     screen over the 'ambulance_update'/'ambulance_arrived' events."""
     data = request.json or {}
     status = data.get('status')
-    emergency_id = data.get('emergency_id')
+    emergency_id = data.get('emergency_id') or data.get('emergencyId')
     result = process_ambulance_status_change(ambulance_id, emergency_id, status)
     if 'error' in result:
         return jsonify(result), 404
@@ -1414,18 +1835,11 @@ def ambulance_status(ambulance_id):
 @app.route('/api/ambulance/<ambulance_id>/location', methods=['POST'])
 def update_ambulance_gps(ambulance_id):
     data = request.json or {}
-    location = data.get('location')
-    emergency_id = data.get('emergency_id')
-    status = data.get('status', 'en_route')
-    if location and 'lat' in location and 'lng' in location:
-        handle_driver_location_update({
-            'ambulance_id': ambulance_id,
-            'emergency_id': emergency_id,
-            'location': location,
-            'status': status
-        })
-        return jsonify({'ok': True})
-    return jsonify({'error': 'Invalid location'}), 400
+    data['ambulance_id'] = ambulance_id
+    success, res = process_location_update(data)
+    if success:
+        return jsonify({'ok': True, 'data': res})
+    return jsonify({'error': res.get('message', 'Invalid location'), 'code': res.get('code')}), 400
 
 
 # ============================================================# ============================================================

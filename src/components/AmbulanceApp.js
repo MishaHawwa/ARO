@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import useLocationTracking from '../hooks/useLocationTracking';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://aro-backend-tvkq.onrender.com');
 
@@ -102,9 +103,9 @@ export default function AmbulanceApp() {
   }, []);
 
   // GPS Tracking
+  // Initial location quick fix
   useEffect(() => {
     if (!navigator.geolocation) return;
-
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setMyLocation({
@@ -113,32 +114,23 @@ export default function AmbulanceApp() {
         });
       },
       (err) => console.warn("GPS Initial fix warning:", err),
-      { enableHighAccuracy: false, timeout: 2000, maximumAge: 60000 }
+      { enableHighAccuracy: false, timeout: 2500, maximumAge: 60000 }
     );
-
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        setMyLocation({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude
-        });
-      },
-      (err) => console.warn("Watch GPS error:", err),
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 5000 }
-    );
-
-    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
   // WebSocket Connection
   useEffect(() => {
     if (isLoggedIn) {
-      const newSocket = io(API_BASE_URL);
+      const newSocket = io(API_BASE_URL, {
+        reconnection: true,
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000
+      });
       setSocket(newSocket);
 
       newSocket.on('connect', () => {
         console.log('Ambulance connected to backend:', ambulanceId);
-        newSocket.emit('join_ambulance', { ambulance_id: ambulanceId });
+        newSocket.emit('join_ambulance', { ambulance_id: ambulanceId, ambulanceId });
       });
 
       newSocket.on('new_assignment', (data) => {
@@ -155,6 +147,16 @@ export default function AmbulanceApp() {
         if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
       });
 
+      newSocket.on('ambulance:location:updated', (update) => {
+        if (update.eta !== undefined) {
+          setRouteInfo(prev => ({ ...prev, etaMins: update.eta }));
+          setCountdownSeconds(update.eta * 60);
+        }
+        if (update.distanceKm !== undefined) {
+          setRouteInfo(prev => ({ ...prev, distanceKm: update.distanceKm }));
+        }
+      });
+
       newSocket.on('ambulance_update', (update) => {
         if (update.eta !== undefined) {
           setRouteInfo(prev => ({ ...prev, etaMins: update.eta }));
@@ -169,35 +171,27 @@ export default function AmbulanceApp() {
     }
   }, [isLoggedIn, ambulanceId]);
 
-  // Instant real-time GPS streaming over Socket.IO
-  useEffect(() => {
-    if (!socket || !isLoggedIn || !myLocation) return;
-    socket.emit('driver_location_update', {
-      ambulance_id: ambulanceId,
-      emergency_id: assignment?.emergency_id,
-      location: myLocation,
-      status: status
-    });
-  }, [socket, isLoggedIn, myLocation, ambulanceId, assignment?.emergency_id, status]);
-
-  // Backup HTTP location sync (throttled)
-  const lastSyncRef = useRef(0);
-  useEffect(() => {
-    if (!isLoggedIn || !myLocation || !ambulanceId) return;
-    const now = Date.now();
-    if (now - lastSyncRef.current < 10000 && status !== 'assigned') return;
-    lastSyncRef.current = now;
-
-    fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/location`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: myLocation,
-        emergency_id: assignment?.emergency_id,
-        status
-      })
-    }).catch(err => console.log('Location sync error:', err));
-  }, [isLoggedIn, myLocation, ambulanceId, status, assignment]);
+  // Genuine Real-Time Browser GPS Tracking via Reusable Hook
+  const {
+    isTracking,
+    trackingStatus,
+    telemetry,
+    errorMessage,
+    startTracking,
+    stopTracking
+  } = useLocationTracking({
+    socket,
+    ambulanceId,
+    emergencyId: assignment?.emergency_id || assignment?.emergencyId,
+    trackingToken: assignment?.tracking_token || assignment?.trackingToken,
+    status,
+    enabled: status === 'en_route_to_patient' || status === 'en_route_to_hospital',
+    transmissionInterval: 2500,
+    minDistanceMeters: 3.0,
+    onLocationUpdate: ({ location }) => {
+      setMyLocation(location);
+    }
+  });
 
   const respondToAssignment = async (accepted) => {
     try {
@@ -282,12 +276,23 @@ export default function AmbulanceApp() {
     };
     setMyLocation(newLoc);
     if (socket) {
-      socket.emit('driver_location_update', {
+      const payload = {
+        ambulanceId,
         ambulance_id: ambulanceId,
+        emergencyId: assignment.emergency_id,
         emergency_id: assignment.emergency_id,
+        trackingToken: assignment.tracking_token || assignment.trackingToken,
+        latitude: newLoc.lat,
+        longitude: newLoc.lng,
         location: newLoc,
-        status: status
-      });
+        accuracy: 5.0,
+        heading: 90,
+        speed: 35.0,
+        timestamp: new Date().toISOString(),
+        status
+      };
+      socket.emit('ambulance:location:update', payload);
+      socket.emit('driver_location_update', payload);
     }
   };
 
@@ -464,6 +469,68 @@ export default function AmbulanceApp() {
                     style={{ padding: '16px 28px', fontSize: 17, background: '#2e7d32', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(46, 125, 50, 0.3)' }}
                   >
                     ✓ Confirm Arrived at Hospital
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Live GPS Tracking Control & Hardware Telemetry Banner */}
+            <div style={{ background: 'white', padding: '16px 22px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 14px rgba(0,0,0,0.04)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                <span style={{ 
+                  display: 'inline-flex', 
+                  alignItems: 'center', 
+                  gap: '8px', 
+                  padding: '6px 14px', 
+                  borderRadius: '20px', 
+                  fontWeight: 'bold', 
+                  fontSize: '0.85rem',
+                  background: trackingStatus === 'live' ? '#dcfce7' : (trackingStatus === 'permission_denied' ? '#fee2e2' : '#fef9c3'),
+                  color: trackingStatus === 'live' ? '#166534' : (trackingStatus === 'permission_denied' ? '#991b1b' : '#854d0e')
+                }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: trackingStatus === 'live' ? '#22c55e' : (trackingStatus === 'permission_denied' ? '#ef4444' : '#eab308') }}></span>
+                  {trackingStatus === 'live' && 'LIVE GPS STREAMING'}
+                  {trackingStatus === 'starting' && 'STARTING GPS...'}
+                  {trackingStatus === 'stale' && 'GPS SIGNAL STALE'}
+                  {trackingStatus === 'permission_denied' && 'GPS PERMISSION DENIED'}
+                  {trackingStatus === 'unavailable' && 'GPS UNAVAILABLE'}
+                  {trackingStatus === 'stopped' && 'GPS SHARING PAUSED'}
+                  {trackingStatus === 'idle' && 'GPS IDLE'}
+                </span>
+
+                <div style={{ fontSize: '0.88rem', color: '#475569', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                  {telemetry.accuracy !== null && (
+                    <span>🎯 Accuracy: <strong>±{telemetry.accuracy}m</strong></span>
+                  )}
+                  {telemetry.speed !== null && (
+                    <span>⚡ Speed: <strong>{telemetry.speed} km/h</strong></span>
+                  )}
+                  {telemetry.heading !== null && (
+                    <span>🧭 Heading: <strong>{telemetry.heading}°</strong></span>
+                  )}
+                </div>
+
+                {errorMessage && (
+                  <div style={{ color: '#dc2626', fontSize: '0.82rem', fontWeight: 600 }}>
+                    ⚠️ {errorMessage}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {isTracking ? (
+                  <button 
+                    onClick={() => stopTracking('manual_pause')}
+                    style={{ padding: '8px 16px', background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+                  >
+                    ⏹ Pause GPS
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => startTracking()}
+                    style={{ padding: '8px 16px', background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+                  >
+                    📡 Resume GPS
                   </button>
                 )}
               </div>
