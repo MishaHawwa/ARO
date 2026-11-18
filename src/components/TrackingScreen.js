@@ -32,10 +32,37 @@ const patientIcon = new L.Icon({
   iconAnchor: [16, 32],
 });
 
-const ambulanceIcon = new L.Icon({
-  iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDMyIDMyIj48Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSIxMiIgZmlsbD0iIzNhODZmZiIvPjx0ZXh0IHg9IjE2IiB5PSIyMSIgZm9udC1zaXplPSIxNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiPvCfmoE8L3RleHQ+PC9zdmc+',
-  iconSize: [32, 32],
-  iconAnchor: [16, 32],
+const createAmbulanceIcon = (heading = 0) => L.divIcon({
+  className: 'rotatable-ambulance-marker',
+  html: `
+    <div style="
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: rotate(${heading || 0}deg);
+      transition: transform 0.4s ease;
+    ">
+      <div style="
+        background: #2563eb;
+        color: white;
+        border: 2px solid white;
+        border-radius: 50%;
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        font-size: 19px;
+      ">
+        🚑
+      </div>
+    </div>
+  `,
+  iconSize: [40, 40],
+  iconAnchor: [20, 20]
 });
 
 const hospitalIcon = new L.Icon({
@@ -101,7 +128,44 @@ function TrackingScreen({ data, onBack }) {
   })();
 
   const [ambulanceLocation, setAmbulanceLocation] = useState(resolvedAmbulanceLoc);
+  const [patientLocation, setPatientLocation] = useState(data.patient_location || { lat: 12.8725, lng: 74.8440 });
   const [ambulanceStatus, setAmbulanceStatus] = useState('En Route to Patient');
+
+  // Linear Interpolation (lerp) animation refs for silky-smooth vehicle gliding
+  const animFrameRef = React.useRef(null);
+  const currentMarkerPosRef = React.useRef([resolvedAmbulanceLoc.lat, resolvedAmbulanceLoc.lng]);
+  const socketRef = React.useRef(null);
+
+  const animateMarkerLerp = (targetLat, targetLng, durationMs = 1800) => {
+    if (!ambulanceMarkerRef.current) return;
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+    }
+
+    const startLat = currentMarkerPosRef.current ? currentMarkerPosRef.current[0] : targetLat;
+    const startLng = currentMarkerPosRef.current ? currentMarkerPosRef.current[1] : targetLng;
+    const startTime = performance.now();
+
+    const step = (now) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / durationMs, 1.0);
+      const ease = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+      const curLat = startLat + (targetLat - startLat) * ease;
+      const curLng = startLng + (targetLng - startLng) * ease;
+      currentMarkerPosRef.current = [curLat, curLng];
+
+      if (ambulanceMarkerRef.current) {
+        ambulanceMarkerRef.current.setLatLng([curLat, curLng]);
+      }
+
+      if (progress < 1.0) {
+        animFrameRef.current = requestAnimationFrame(step);
+      }
+    };
+
+    animFrameRef.current = requestAnimationFrame(step);
+  };
   const [journeyPhase, setJourneyPhase] = useState('to_patient');
   const [liveEta, setLiveEta] = useState(data.eta || 5);
   const [liveDistance, setLiveDistance] = useState(data.distance || 2.1);
@@ -207,9 +271,14 @@ function TrackingScreen({ data, onBack }) {
       reconnectionDelay: 1000
     });
 
+    socketRef.current = socket;
+    const tripId = data.trip_id || `trip_${data.emergency_id}`;
+
     const subscribeToTracking = () => {
-      console.log('Subscribing to emergency tracking room:', data.emergency_id);
+      console.log('Subscribing to unified trip room:', tripId);
+      socket.emit('join_trip', { tripId, trip_id: tripId, emergencyId: data.emergency_id });
       socket.emit('tracking:subscribe', {
+        tripId,
         emergencyId: data.emergency_id,
         emergency_id: data.emergency_id,
         trackingToken: data.tracking_token,
@@ -289,15 +358,13 @@ function TrackingScreen({ data, onBack }) {
         setTimeout(() => setReroutedNotice(null), 8000);
       }
 
-      // Validate coordinates
-      const lat = update.latitude !== undefined ? update.latitude : (update.location?.lat);
-      const lng = update.longitude !== undefined ? update.longitude : (update.location?.lng);
+      // Validate coordinates and animate smoothly using linear interpolation (lerp)
+      const lat = update.lat !== undefined ? update.lat : (update.latitude !== undefined ? update.latitude : (update.location?.lat));
+      const lng = update.lng !== undefined ? update.lng : (update.longitude !== undefined ? update.longitude : (update.location?.lng));
       if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
         const newCoords = { lat, lng };
         setAmbulanceLocation(newCoords);
-        if (ambulanceMarkerRef.current) {
-          ambulanceMarkerRef.current.setLatLng([lat, lng]);
-        }
+        animateMarkerLerp(lat, lng, 1800);
       }
 
       if (update.status) setAmbulanceStatus(update.status);
@@ -323,6 +390,17 @@ function TrackingScreen({ data, onBack }) {
 
     socket.on('ambulance:location:updated', handleLocationUpdate);
     socket.on('ambulance_update', handleLocationUpdate);
+    socket.on('location_broadcast', (update) => {
+      if (update.role === 'citizen') {
+        const patLat = update.lat !== undefined ? update.lat : update.latitude;
+        const patLng = update.lng !== undefined ? update.lng : update.longitude;
+        if (typeof patLat === 'number' && typeof patLng === 'number') {
+          setPatientLocation({ lat: patLat, lng: patLng });
+        }
+      } else {
+        handleLocationUpdate(update);
+      }
+    });
 
     socket.on('tracking:started', () => {
       setTrackingState('live');
@@ -347,6 +425,7 @@ function TrackingScreen({ data, onBack }) {
     });
 
     return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       socket.off('connect');
       socket.off('reconnect');
       socket.off('disconnect');
@@ -492,11 +571,11 @@ function TrackingScreen({ data, onBack }) {
             />
             <MapRecenter center={[ambulanceLocation.lat, ambulanceLocation.lng]} enabled={autoFollow} />
             
-            <Marker position={[data.patient_location.lat, data.patient_location.lng]} icon={patientIcon}>
+            <Marker position={[patientLocation.lat, patientLocation.lng]} icon={patientIcon}>
               <Popup>Patient Location</Popup>
             </Marker>
             
-            <Marker position={[ambulanceLocation.lat, ambulanceLocation.lng]} icon={ambulanceIcon} ref={ambulanceMarkerRef}>
+            <Marker position={[ambulanceLocation.lat, ambulanceLocation.lng]} icon={createAmbulanceIcon(telemetry.heading)} ref={ambulanceMarkerRef}>
               <Popup>Ambulance - {ambulanceStatus}</Popup>
             </Marker>
             

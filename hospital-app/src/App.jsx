@@ -14,10 +14,37 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const ambulanceIcon = new L.Icon({
-  iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDMyIDMyIj48Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSIxMiIgZmlsbD0iI2QzMmYyZiIvPjx0ZXh0IHg9IjE2IiB5PSIyMSIgZm9udC1zaXplPSIxNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiPvCfmoE8L3RleHQ+PC9zdmc+',
-  iconSize: [32, 32],
-  iconAnchor: [16, 32],
+const createAmbulanceIcon = (heading = 0) => L.divIcon({
+  className: 'rotatable-hospital-ambulance-marker',
+  html: `
+    <div style="
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: rotate(${heading || 0}deg);
+      transition: transform 0.4s ease;
+    ">
+      <div style="
+        background: #d32f2f;
+        color: white;
+        border: 2px solid white;
+        border-radius: 50%;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        font-size: 16px;
+      ">
+        🚑
+      </div>
+    </div>
+  `,
+  iconSize: [36, 36],
+  iconAnchor: [18, 18]
 });
 
 export default function App() {
@@ -27,6 +54,12 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [socket, setSocket] = useState(null);
   const [emergencies, setEmergencies] = useState({});
+  const [nowEpoch, setNowEpoch] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowEpoch(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/hospitals`)
@@ -52,30 +85,70 @@ export default function App() {
 
       newSocket.on('hospital_new_emergency', (data) => {
         console.log('New emergency assigned to hospital:', data);
+        const tripId = data.trip_id || `trip_${data.emergency_id}`;
         setEmergencies(prev => ({
           ...prev,
           [data.emergency_id]: {
             ...data,
-            ambulance_status: 'Dispatched',
-            ambulance_location: null
+            trip_id: tripId,
+            ambulance_status: data.status || 'Dispatched',
+            ambulance_location: data.ambulance_location || null,
+            patient_location: data.patient_location || null,
+            eta: data.eta || 5,
+            distance: data.distance || 2.0,
+            heading: 0,
+            speed: null,
+            last_updated: Date.now()
           }
         }));
+        newSocket.emit('join_trip', { tripId });
         newSocket.emit('start_tracking', { emergency_id: data.emergency_id });
       });
 
-      newSocket.on('ambulance_update', (update) => {
+      const handleUpdate = (update) => {
+        const emgId = update.emergency_id || update.emergencyId || (update.tripId ? update.tripId.replace('trip_', '') : null);
+        if (!emgId) return;
+
         setEmergencies(prev => {
-          if (!prev[update.emergency_id]) return prev;
+          const existing = prev[emgId];
+          if (!existing) return prev;
+
+          if (update.role === 'citizen') {
+            const patLat = update.lat !== undefined ? update.lat : update.latitude;
+            const patLng = update.lng !== undefined ? update.lng : update.longitude;
+            return {
+              ...prev,
+              [emgId]: {
+                ...existing,
+                patient_location: (patLat !== undefined && patLng !== undefined) ? { lat: patLat, lng: patLng } : existing.patient_location,
+                last_updated: Date.now()
+              }
+            };
+          }
+
+          const lat = update.lat !== undefined ? update.lat : (update.latitude !== undefined ? update.latitude : update.location?.lat);
+          const lng = update.lng !== undefined ? update.lng : (update.longitude !== undefined ? update.longitude : update.location?.lng);
+          const loc = (lat !== undefined && lng !== undefined) ? { lat, lng } : existing.ambulance_location;
+
           return {
             ...prev,
-            [update.emergency_id]: {
-              ...prev[update.emergency_id],
-              ambulance_status: update.status,
-              ambulance_location: update.location || prev[update.emergency_id].ambulance_location
+            [emgId]: {
+              ...existing,
+              ambulance_location: loc,
+              ambulance_status: update.status || existing.ambulance_status,
+              eta: update.eta !== undefined ? update.eta : existing.eta,
+              distance: update.distance_km || update.distanceKm || existing.distance,
+              heading: update.heading !== undefined ? update.heading : existing.heading,
+              speed: update.speed !== undefined ? update.speed : existing.speed,
+              last_updated: Date.now()
             }
           };
         });
-      });
+      };
+
+      newSocket.on('location_broadcast', handleUpdate);
+      newSocket.on('ambulance:location:updated', handleUpdate);
+      newSocket.on('ambulance_update', handleUpdate);
       
       return () => newSocket.close();
     }
@@ -198,7 +271,14 @@ export default function App() {
               <div key={emg.emergency_id} style={{ background: 'white', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', border: '1px solid #ffcdd2' }}>
                 <div style={{ background: '#d32f2f', color: 'white', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ fontWeight: 'bold', fontSize: '1.05rem' }}>🚨 {emg.emergency_type}</div>
-                  <div style={{ fontSize: '0.9rem', background: 'rgba(255,255,255,0.2)', padding: '4px 10px', borderRadius: '12px' }}>ETA: {emg.eta} mins</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '0.8rem', background: '#2e7d32', color: 'white', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                      ● {emg.last_updated ? `${Math.floor((nowEpoch - emg.last_updated)/1000)}s ago` : 'Live'}
+                    </span>
+                    <span style={{ fontSize: '0.9rem', background: 'rgba(255,255,255,0.25)', padding: '4px 10px', borderRadius: '12px', fontWeight: 'bold' }}>
+                      ETA: {emg.eta}m
+                    </span>
+                  </div>
                 </div>
                 
                 <div style={{ padding: '20px' }}>
@@ -222,8 +302,12 @@ export default function App() {
                     >
                       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                       {emg.ambulance_location && (
-                        <Marker position={[emg.ambulance_location.lat, emg.ambulance_location.lng]} icon={ambulanceIcon}>
-                          <Popup>Ambulance - {emg.ambulance_status}</Popup>
+                        <Marker position={[emg.ambulance_location.lat, emg.ambulance_location.lng]} icon={createAmbulanceIcon(emg.heading)}>
+                          <Popup>
+                            <strong>Ambulance Unit</strong><br />
+                            Status: {emg.ambulance_status}<br />
+                            Speed: {emg.speed ? `${emg.speed} km/h` : 'En route'}
+                          </Popup>
                         </Marker>
                       )}
                       {emg.patient_location && (

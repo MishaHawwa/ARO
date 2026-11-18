@@ -288,5 +288,105 @@ class TestRealTimeTracking(unittest.TestCase):
 
         client_citizen.disconnect()
 
+    # ---------------------------------------------------------
+    # TEST SUITE F: Unified Trip Room & Multi-Portal Tracking
+    # ---------------------------------------------------------
+    def test_join_trip_and_bidirectional_location_broadcast(self):
+        """Citizen, Driver, and Hospital subscribe to trip room; driver & citizen coordinates broadcast to all."""
+        emg = self._create_test_emergency()
+        emg_id = emg['emergency_id']
+        trip_id = emg.get('trip_id') or f"trip_{emg_id}"
+        amb_id = emg['ambulance']['id']
+        hosp_id = emg['hospital']['id']
+
+        client_citizen = socketio.test_client(app)
+        client_driver = socketio.test_client(app)
+        client_hospital = socketio.test_client(app)
+
+        # 1. All 3 portals join the unified trip room
+        client_citizen.emit('join_trip', {'tripId': trip_id})
+        client_driver.emit('join_trip', {'tripId': trip_id})
+        client_hospital.emit('join_trip', {'tripId': trip_id})
+
+        # Clear initial join snapshot packets
+        _ = client_citizen.get_received()
+        _ = client_driver.get_received()
+        _ = client_hospital.get_received()
+
+        # 2. Driver streams GPS coordinate
+        time.sleep(0.8)
+        now = time.time()
+        client_driver.emit('update_location', {
+            'tripId': trip_id,
+            'ambulance_id': amb_id,
+            'role': 'driver',
+            'lat': 12.8735,
+            'lng': 74.8455,
+            'heading': 90.0,
+            'speed': 45.0,
+            'timestamp': now
+        })
+
+        # Verify all three clients receive location_broadcast
+        citizen_events = client_citizen.get_received()
+        driver_events = client_driver.get_received()
+        hospital_events = client_hospital.get_received()
+
+        citizen_broadcasts = [e for e in citizen_events if e['name'] == 'location_broadcast']
+        hospital_broadcasts = [e for e in hospital_events if e['name'] == 'location_broadcast']
+
+        self.assertTrue(len(citizen_broadcasts) >= 1)
+        self.assertTrue(len(hospital_broadcasts) >= 1)
+        self.assertEqual(citizen_broadcasts[0]['args'][0]['role'], 'driver')
+        self.assertEqual(citizen_broadcasts[0]['args'][0]['heading'], 90.0)
+
+        # 3. Citizen / Patient moves and emits updated location
+        client_citizen.emit('update_location', {
+            'tripId': trip_id,
+            'role': 'citizen',
+            'lat': 12.8728,
+            'lng': 74.8445
+        })
+
+        driver_events_2 = client_driver.get_received()
+        hospital_events_2 = client_hospital.get_received()
+
+        driver_pat_broadcast = [e for e in driver_events_2 if e['name'] == 'location_broadcast' and e['args'][0].get('role') == 'citizen']
+        hosp_pat_broadcast = [e for e in hospital_events_2 if e['name'] == 'location_broadcast' and e['args'][0].get('role') == 'citizen']
+
+        self.assertTrue(len(driver_pat_broadcast) >= 1)
+        self.assertTrue(len(hosp_pat_broadcast) >= 1)
+        self.assertEqual(driver_pat_broadcast[0]['args'][0]['lat'], 12.8728)
+
+        client_citizen.disconnect()
+        client_driver.disconnect()
+        client_hospital.disconnect()
+
+    def test_hospital_portal_new_emergency_notification(self):
+        """When an emergency is created, the assigned hospital receives hospital_new_emergency with trip_id."""
+        hospitals = self.client.get('/api/hospitals').get_json()
+        target_hospital = hospitals[0]
+        
+        client_hospital = socketio.test_client(app)
+        client_hospital.emit('join_hospital', {'hospital_id': target_hospital['id']})
+        _ = client_hospital.get_received()
+
+        # Trigger emergency near hospital
+        res = self.client.post('/api/emergency', json={
+            'type': 'Heart Attack',
+            'location': target_hospital['location']
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+
+        events = client_hospital.get_received()
+        new_emg_events = [e for e in events if e['name'] == 'hospital_new_emergency']
+        self.assertTrue(len(new_emg_events) >= 1)
+        notif = new_emg_events[0]['args'][0]
+        self.assertIn('trip_id', notif)
+        self.assertEqual(notif['emergency_id'], data['emergency_id'])
+
+        client_hospital.disconnect()
+
 if __name__ == '__main__':
     unittest.main()

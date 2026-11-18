@@ -100,9 +100,13 @@ export function useLocationTracking({
     setTrackingStatus('starting');
     setIsTracking(true);
 
-    // Notify backend
+    // Notify backend and join trip room
     if (socket && socket.connected) {
+      const tripId = `trip_${emergencyId.replace('trip_', '')}`;
+      socket.emit('join_trip', { tripId });
       socket.emit('tracking:start', {
+        tripId,
+        trip_id: tripId,
         ambulanceId,
         ambulance_id: ambulanceId,
         emergencyId,
@@ -181,7 +185,13 @@ export function useLocationTracking({
         lastTransmittedLocRef.current = locObj;
         setLastTransmitted({ ...locObj, timestamp: isoTs });
 
+        const tripId = `trip_${emergencyId.replace('trip_', '')}`;
         const payload = {
+          tripId,
+          trip_id: tripId,
+          role: 'driver',
+          lat: latitude,
+          lng: longitude,
           ambulanceId,
           ambulance_id: ambulanceId,
           emergencyId,
@@ -197,6 +207,7 @@ export function useLocationTracking({
           status
         };
 
+        socket.emit('update_location', payload);
         socket.emit('ambulance:location:update', payload);
       }
     };

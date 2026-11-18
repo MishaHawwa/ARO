@@ -137,6 +137,8 @@ export default function AmbulanceApp() {
         console.log('New assignment received:', data);
         setAssignment(data);
         setStatus('assigned');
+        const tripId = data.trip_id || `trip_${data.emergency_id}`;
+        newSocket.emit('join_trip', { tripId });
         if (data.eta) {
           setRouteInfo(prev => ({ ...prev, etaMins: data.eta }));
           setCountdownSeconds(data.eta * 60);
@@ -145,6 +147,26 @@ export default function AmbulanceApp() {
           setRouteInfo(prev => ({ ...prev, distanceKm: data.distance }));
         }
         if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+      });
+
+      newSocket.on('location_broadcast', (update) => {
+        if (update.role === 'citizen') {
+          const patLat = update.lat !== undefined ? update.lat : update.latitude;
+          const patLng = update.lng !== undefined ? update.lng : update.longitude;
+          if (typeof patLat === 'number' && typeof patLng === 'number') {
+            setAssignment(prev => prev ? ({
+              ...prev,
+              patient_location: { lat: patLat, lng: patLng }
+            }) : prev);
+          }
+        }
+        if (update.eta !== undefined) {
+          setRouteInfo(prev => ({ ...prev, etaMins: update.eta }));
+          setCountdownSeconds(update.eta * 60);
+        }
+        if (update.distanceKm !== undefined || update.distance_km !== undefined) {
+          setRouteInfo(prev => ({ ...prev, distanceKm: update.distanceKm || update.distance_km }));
+        }
       });
 
       newSocket.on('ambulance:location:updated', (update) => {
