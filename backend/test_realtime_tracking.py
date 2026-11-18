@@ -388,5 +388,73 @@ class TestRealTimeTracking(unittest.TestCase):
 
         client_hospital.disconnect()
 
+    def test_hospital_passcode_gate_api(self):
+        """Passcode 1234 unlocks hospital radar; wrong passcode returns 401."""
+        res_ok = self.client.post('/api/hospital/verify-passcode', json={'passcode': '1234'})
+        self.assertEqual(res_ok.status_code, 200)
+        self.assertTrue(res_ok.get_json().get('valid'))
+
+        res_bad = self.client.post('/api/hospital/verify-passcode', json={'passcode': '0000'})
+        self.assertEqual(res_bad.status_code, 401)
+        self.assertFalse(res_bad.get_json().get('valid'))
+
+    def test_stationary_eta_holds_constant(self):
+        """Stationary ambulance (speed < 1.0 m/s or displacement < 5m) preserves distance and ETA without countdown."""
+        emg = self._create_test_emergency()
+        emg_id = emg['emergency_id']
+        amb_id = emg['ambulance']['id']
+
+        # Initial move
+        time.sleep(0.8)
+        now = time.time()
+        success1, payload1 = process_location_update({
+            'ambulance_id': amb_id,
+            'emergency_id': emg_id,
+            'latitude': 12.8730,
+            'longitude': 74.8450,
+            'speed': 10.0,
+            'timestamp': now
+        })
+        self.assertTrue(success1)
+        initial_eta = payload1['eta']
+        initial_dist = payload1['distance_meters']
+
+        # Stationary update: stationary speed 0.0 m/s, minimal displacement
+        time.sleep(0.8)
+        now2 = now + 1.0
+        success2, payload2 = process_location_update({
+            'ambulance_id': amb_id,
+            'emergency_id': emg_id,
+            'latitude': 12.873001,
+            'longitude': 74.845001,
+            'speed': 0.0,
+            'timestamp': now2
+        })
+        self.assertTrue(success2)
+        self.assertTrue(payload2['is_stationary'])
+        self.assertEqual(payload2['eta'], initial_eta)
+        self.assertEqual(payload2['distance_meters'], initial_dist)
+
+    def test_idle_ambulance_gps_update(self):
+        """Idle ambulance can publish initial hardware GPS before any assignment."""
+        ambs = fetch_ambulances()
+        first_amb = ambs[0]
+        time.sleep(0.8)
+        success, res = process_location_update({
+            'ambulance_id': first_amb['id'],
+            'latitude': 13.9800,
+            'longitude': 74.5600,
+            'speed': 0.0,
+            'timestamp': time.time()
+        })
+        self.assertTrue(success)
+        self.assertEqual(res['code'], 'IDLE_LOCATION_UPDATED')
+        self.assertEqual(first_amb['location']['lat'], 13.9800)
+
+    def test_emergency_missing_location_rejected(self):
+        """Emergency creation without valid GPS coordinates is strictly rejected with 400."""
+        res = self.client.post('/api/emergency', json={'type': 'Heart Attack'})
+        self.assertEqual(res.status_code, 400)
+
 if __name__ == '__main__':
     unittest.main()

@@ -48,6 +48,11 @@ const createAmbulanceIcon = (heading = 0) => L.divIcon({
 });
 
 export default function App() {
+  const [isUnlocked, setIsUnlocked] = useState(() => sessionStorage.getItem('hospital_passcode_verified') === 'true');
+  const [passcode, setPasscode] = useState('');
+  const [passcodeError, setPasscodeError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [hospitalsList, setHospitalsList] = useState([]);
   const [selectedHospital, setSelectedHospital] = useState(null);
@@ -55,6 +60,52 @@ export default function App() {
   const [socket, setSocket] = useState(null);
   const [emergencies, setEmergencies] = useState({});
   const [nowEpoch, setNowEpoch] = useState(Date.now());
+
+  const handleVerifyPasscode = async (e) => {
+    if (e) e.preventDefault();
+    const cleanCode = passcode.trim();
+    if (!cleanCode) {
+      setPasscodeError('Please enter the security PIN.');
+      return;
+    }
+    setIsVerifying(true);
+    setPasscodeError('');
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/hospital/verify-passcode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: cleanCode })
+      });
+      const data = await res.json();
+      if (res.ok && data.valid) {
+        sessionStorage.setItem('hospital_passcode_verified', 'true');
+        setIsUnlocked(true);
+        setPasscodeError('');
+      } else {
+        setPasscodeError(data.error || 'Invalid passcode. Default is 1234.');
+      }
+    } catch (err) {
+      // Local fallback verification in case of offline / preflight error
+      if (cleanCode === '1234') {
+        sessionStorage.setItem('hospital_passcode_verified', 'true');
+        setIsUnlocked(true);
+        setPasscodeError('');
+      } else {
+        setPasscodeError('Invalid passcode. Default is 1234.');
+      }
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleLockDashboard = () => {
+    sessionStorage.removeItem('hospital_passcode_verified');
+    setIsUnlocked(false);
+    setIsLoggedIn(false);
+    setPasscode('');
+    setPasscodeError('');
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setNowEpoch(Date.now()), 1000);
@@ -73,8 +124,9 @@ export default function App() {
       .catch(err => console.error("Error fetching hospitals:", err));
   }, []);
 
+  // Socket connection is STRICTLY gated: NEVER connect when locked!
   useEffect(() => {
-    if (isLoggedIn && selectedHospital) {
+    if (isUnlocked && isLoggedIn && selectedHospital) {
       const newSocket = io(API_BASE_URL);
       setSocket(newSocket);
 
@@ -152,11 +204,92 @@ export default function App() {
       
       return () => newSocket.close();
     }
-  }, [isLoggedIn, selectedHospital]);
+  }, [isUnlocked, isLoggedIn, selectedHospital]);
 
   const filteredHospitals = hospitalsList.filter(h => 
     h.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  if (!isUnlocked) {
+    return (
+      <div style={{ padding: 40, fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", background: '#f5f5f7', color: '#333', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center', marginBottom: 25 }}>
+          <div style={{ fontSize: '3.5rem', marginBottom: '10px' }}>🏥</div>
+          <h1 style={{ fontSize: '2.4rem', margin: '0 0 8px 0', color: '#d32f2f' }}>Hospital Emergency Portal</h1>
+          <p style={{ color: '#666', fontSize: '1.05rem', margin: 0 }}>Authorized Facility Access & Emergency Radar</p>
+        </div>
+        
+        <div style={{ background: 'white', padding: '38px', borderRadius: '16px', width: '100%', maxWidth: '420px', boxShadow: '0 10px 30px rgba(0,0,0,0.08)', boxSizing: 'border-box' }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <span style={{ fontSize: '2.2rem' }}>🔒</span>
+            <h3 style={{ margin: '8px 0 4px 0', color: '#222', fontSize: '1.25rem' }}>Passcode Gate</h3>
+            <p style={{ margin: 0, color: '#777', fontSize: '0.88rem' }}>Enter the 4-digit facility access PIN to unlock the live dashboard</p>
+          </div>
+
+          <form onSubmit={handleVerifyPasscode}>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', marginBottom: 8, color: '#444', fontWeight: 'bold', fontSize: '0.9rem' }}>
+                Universal PIN Code:
+              </label>
+              <input 
+                type="password"
+                maxLength={4}
+                autoFocus
+                placeholder="••••"
+                value={passcode}
+                onChange={(e) => {
+                  setPasscode(e.target.value);
+                  setPasscodeError('');
+                }}
+                style={{ 
+                  width: '100%', 
+                  padding: '14px', 
+                  borderRadius: '10px', 
+                  border: passcodeError ? '2px solid #ef4444' : '1px solid #d1d5db', 
+                  fontSize: '24px', 
+                  textAlign: 'center',
+                  letterSpacing: '10px',
+                  boxSizing: 'border-box', 
+                  outline: 'none',
+                  background: '#f9fafb'
+                }}
+              />
+              <div style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: 6, textAlign: 'center' }}>
+                🔑 Default staff passcode: <strong>1234</strong>
+              </div>
+            </div>
+
+            {passcodeError && (
+              <div style={{ background: '#fee2e2', border: '1px solid #f87171', color: '#991b1b', padding: '10px 14px', borderRadius: '8px', marginBottom: 18, fontSize: '0.86rem', textAlign: 'center', fontWeight: 'bold' }}>
+                ⚠️ {passcodeError}
+              </div>
+            )}
+
+            <button 
+              type="submit"
+              disabled={isVerifying || passcode.length === 0}
+              style={{ 
+                width: '100%', 
+                padding: '15px', 
+                fontSize: 17, 
+                background: '#d32f2f', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '10px', 
+                cursor: (isVerifying || passcode.length === 0) ? 'not-allowed' : 'pointer', 
+                fontWeight: 'bold', 
+                boxShadow: '0 4px 14px rgba(211, 47, 47, 0.3)',
+                opacity: (isVerifying || passcode.length === 0) ? 0.6 : 1,
+                transition: 'all 0.2s'
+              }}
+            >
+              {isVerifying ? 'Verifying PIN...' : '🔓 Unlock Dashboard'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoggedIn) {
     return (
@@ -165,6 +298,16 @@ export default function App() {
         <h2 style={{ fontSize: '1.4rem', fontWeight: 400, color: '#666', marginBottom: '30px' }}>Hospital Portal</h2>
         
         <div style={{ background: 'white', padding: '35px', borderRadius: '16px', width: '100%', maxWidth: '440px', boxShadow: '0 10px 30px rgba(0,0,0,0.08)', boxSizing: 'border-box' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <span style={{ fontSize: '0.85rem', color: '#16a34a', fontWeight: 'bold' }}>✓ Authenticated (PIN 1234)</span>
+            <button 
+              onClick={handleLockDashboard}
+              style={{ padding: '4px 10px', background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.78rem' }}
+            >
+              🔒 Lock
+            </button>
+          </div>
+
           <label style={{ display: 'block', marginBottom: '8px', color: '#444', fontWeight: 'bold', fontSize: '0.95rem' }}>
             Select Your Hospital:
           </label>
@@ -235,6 +378,7 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 'bold' }}>🟢 Accepting Patients</span>
           <button onClick={() => setIsLoggedIn(false)} style={{ padding: '7px 16px', background: '#f5f5f7', color: '#555', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}>Switch Hospital</button>
+          <button onClick={handleLockDashboard} style={{ padding: '7px 16px', background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}>🔒 Lock Portal</button>
         </div>
       </div>
 

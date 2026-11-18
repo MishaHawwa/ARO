@@ -14,13 +14,16 @@ function CitizenApp() {
       const cached = localStorage.getItem('cached_user_location');
       if (cached) return JSON.parse(cached);
     } catch (e) {}
-    return { lat: 12.8725, lng: 74.8440 };
+    return null;
   });
+  const [gpsError, setGpsError] = useState(null);
 
   useEffect(() => {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setGpsError('Geolocation is not supported by your browser or device.');
+      return;
+    }
 
-    // 1. Instant fast location (<50ms) using network/cached position
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const loc = {
@@ -28,15 +31,18 @@ function CitizenApp() {
           lng: position.coords.longitude
         };
         setUserLocation(loc);
+        setGpsError(null);
         try { localStorage.setItem('cached_user_location', JSON.stringify(loc)); } catch (e) {}
       },
       (error) => {
-        console.warn('Fast location check:', error);
+        let msg = 'Unable to fetch current GPS location.';
+        if (error.code === 1) msg = 'Location permission denied. Please allow location access in your browser settings to detect your emergency location.';
+        else if (error.code === 3) msg = 'GPS signal request timed out. Retrying in background...';
+        setGpsError(msg);
       },
-      { enableHighAccuracy: false, timeout: 2000, maximumAge: 300000 }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
     );
 
-    // 2. High-accuracy watch in background without blocking UI
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const loc = {
@@ -44,10 +50,13 @@ function CitizenApp() {
           lng: position.coords.longitude
         };
         setUserLocation(loc);
+        setGpsError(null);
         try { localStorage.setItem('cached_user_location', JSON.stringify(loc)); } catch (e) {}
       },
-      (error) => console.warn('Background GPS watch:', error),
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 }
+      (error) => {
+        if (error.code === 1) setGpsError('Location permission denied. Live GPS unavailable.');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
@@ -55,43 +64,62 @@ function CitizenApp() {
 
   const handleEmergencySelect = (emergencyType) => {
     setSelectedEmergency(emergencyType);
-    setScreen('loading');
 
-    const API_BASE_URL = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://aro-backend-tvkq.onrender.com');
-    const activeLocation = userLocation || { lat: 12.8725, lng: 74.8440 };
-    const startTime = Date.now();
+    const sendEmergencyDispatch = (coords) => {
+      setScreen('loading');
+      const API_BASE_URL = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://aro-backend-tvkq.onrender.com');
+      const startTime = Date.now();
 
-    // Fire API request immediately without any artificial delay
-    fetch(`${API_BASE_URL}/api/emergency`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        type: emergencyType,
-        location: activeLocation
-      }),
-    })
-      .then(response => response.json())
-      .then(data => {
-        if (data.error) {
-          alert(data.error);
-          setScreen('dashboard');
-          return;
-        }
-        // Smooth 600ms visual transition for loading animation
-        const elapsed = Date.now() - startTime;
-        const remainingDelay = Math.max(0, 600 - elapsed);
-        setTimeout(() => {
-          setEmergencyData(data);
-          setScreen('tracking');
-        }, remainingDelay);
+      fetch(`${API_BASE_URL}/api/emergency`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: emergencyType,
+          location: coords
+        }),
       })
-      .catch(error => {
-        console.error('Error:', error);
-        alert('Error connecting to server. Please ensure backend is running.');
-        setScreen('dashboard');
-      });
+        .then(response => {
+          if (!response.ok) {
+            return response.json().then(errData => { throw new Error(errData.error || 'Emergency dispatch failed'); });
+          }
+          return response.json();
+        })
+        .then(data => {
+          const elapsed = Date.now() - startTime;
+          const remainingDelay = Math.max(0, 600 - elapsed);
+          setTimeout(() => {
+            setEmergencyData(data);
+            setScreen('tracking');
+          }, remainingDelay);
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          alert(error.message || 'Error connecting to server. Please ensure backend is running.');
+          setScreen('dashboard');
+        });
+    };
+
+    if (userLocation) {
+      sendEmergencyDispatch(userLocation);
+    } else {
+      if (!navigator.geolocation) {
+        alert('Geolocation is not supported by your device. Cannot dispatch emergency.');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const freshLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setUserLocation(freshLoc);
+          sendEmergencyDispatch(freshLoc);
+        },
+        () => {
+          alert('GPS location permission is strictly required to locate and dispatch an ambulance to you. Please enable location permissions in your browser.');
+        },
+        { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+      );
+    }
   };
 
   const handleBackToDashboard = () => {
@@ -102,6 +130,11 @@ function CitizenApp() {
 
   return (
     <div className="App">
+      {gpsError && screen === 'dashboard' && (
+        <div style={{ background: '#fee2e2', border: '1px solid #ef4444', color: '#991b1b', padding: '12px 20px', textAlign: 'center', fontWeight: 'bold', fontSize: '0.9rem' }}>
+          ⚠️ {gpsError}
+        </div>
+      )}
       {screen === 'dashboard' && (
         <Dashboard onEmergencySelect={handleEmergencySelect} />
       )}

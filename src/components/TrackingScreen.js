@@ -116,24 +116,16 @@ function generateRoadWaypoints(start, end) {
 }
 
 function TrackingScreen({ data, onBack }) {
-  // If ambulance and patient are at the exact same location (same-device testing),
-  // station the ambulance ~2.1 km away so they never overlap or cause 0-distance lag
-  const resolvedAmbulanceLoc = (() => {
-    const amb = data.ambulance.location;
-    const pat = data.patient_location;
-    if (Math.abs(amb.lat - pat.lat) < 0.008 && Math.abs(amb.lng - pat.lng) < 0.008) {
-      return { lat: pat.lat - 0.015, lng: pat.lng - 0.012 };
-    }
-    return amb;
-  })();
+  const initialAmbulanceLoc = data.ambulance?.location || data.patient_location;
 
-  const [ambulanceLocation, setAmbulanceLocation] = useState(resolvedAmbulanceLoc);
-  const [patientLocation, setPatientLocation] = useState(data.patient_location || { lat: 12.8725, lng: 74.8440 });
+  const [ambulanceLocation, setAmbulanceLocation] = useState(initialAmbulanceLoc);
+  const [patientLocation, setPatientLocation] = useState(data.patient_location);
+  const [patientGpsError, setPatientGpsError] = useState(null);
   const [ambulanceStatus, setAmbulanceStatus] = useState('En Route to Patient');
 
   // Linear Interpolation (lerp) animation refs for silky-smooth vehicle gliding
   const animFrameRef = React.useRef(null);
-  const currentMarkerPosRef = React.useRef([resolvedAmbulanceLoc.lat, resolvedAmbulanceLoc.lng]);
+  const currentMarkerPosRef = React.useRef([initialAmbulanceLoc.lat, initialAmbulanceLoc.lng]);
   const socketRef = React.useRef(null);
 
   const animateMarkerLerp = (targetLat, targetLng, durationMs = 1800) => {
@@ -169,7 +161,6 @@ function TrackingScreen({ data, onBack }) {
   const [journeyPhase, setJourneyPhase] = useState('to_patient');
   const [liveEta, setLiveEta] = useState(data.eta || 5);
   const [liveDistance, setLiveDistance] = useState(data.distance || 2.1);
-  const [countdownSeconds, setCountdownSeconds] = useState((data.eta || 5) * 60);
   const [showSuggestions, setShowSuggestions] = useState(true);
   
   // Real-Time GPS & Stale State Management
@@ -183,20 +174,66 @@ function TrackingScreen({ data, onBack }) {
   const lastUpdateEpochRef = React.useRef(Date.now());
 
   const [patientRoute, setPatientRoute] = useState(() => 
-    generateRoadWaypoints(resolvedAmbulanceLoc, data.patient_location)
+    generateRoadWaypoints(initialAmbulanceLoc, data.patient_location)
   );
   const [hospitalRoute, setHospitalRoute] = useState(() => 
     generateRoadWaypoints(data.patient_location, data.hospital.location)
   );
 
-  // Live countdown timer and stale reading monitor ticking second-by-second
+  // Live Patient Device GPS Tracking (streams real location to backend, ambulance, and hospital)
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setPatientGpsError('Geolocation is not supported by your browser or device.');
+      return;
+    }
+
+    const tripId = data.trip_id || `trip_${data.emergency_id}`;
+    let lastSendEpoch = 0;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const pLat = position.coords.latitude;
+        const pLng = position.coords.longitude;
+        setPatientLocation({ lat: pLat, lng: pLng });
+        setPatientGpsError(null);
+
+        const now = Date.now();
+        // Emit citizen update every 5-10 seconds
+        if (now - lastSendEpoch >= 5000) {
+          lastSendEpoch = now;
+          if (socketRef.current && socketRef.current.connected) {
+            socketRef.current.emit('update_location', {
+              tripId,
+              trip_id: tripId,
+              role: 'citizen',
+              emergencyId: data.emergency_id,
+              emergency_id: data.emergency_id,
+              lat: pLat,
+              lng: pLng,
+              latitude: pLat,
+              longitude: pLng,
+              accuracy: position.coords.accuracy,
+              timestamp: new Date().toISOString()
+            });
+          }
+        }
+      },
+      (error) => {
+        if (error.code === 1) {
+          setPatientGpsError('Location permission denied. Patient marker using initial GPS pin.');
+        } else if (error.code === 3) {
+          setPatientGpsError('Patient GPS signal weak. Searching...');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [data.emergency_id, data.trip_id]);
+
+  // Signal freshness & stale reading monitor ticking second-by-second (NO blind countdown!)
   useEffect(() => {
     const timer = setInterval(() => {
-      setCountdownSeconds((prev) => {
-        if (prev === null || prev <= 0) return 0;
-        return prev - 1;
-      });
-
       const elapsed = Math.floor((Date.now() - lastUpdateEpochRef.current) / 1000);
       setSecondsSinceLastUpdate(elapsed);
       if (elapsed > 15 && trackingState === 'live') {
@@ -210,7 +247,7 @@ function TrackingScreen({ data, onBack }) {
   useEffect(() => {
     if (!data?.ambulance?.location || !data?.patient_location || !data?.hospital?.location) return;
 
-    const amb = resolvedAmbulanceLoc;
+    const amb = initialAmbulanceLoc;
     const pat = data.patient_location;
     const hosp = data.hospital.location;
     let isMounted = true;
@@ -241,7 +278,6 @@ function TrackingScreen({ data, onBack }) {
             if (json1.routes[0].duration) {
               const mins = Math.max(1, Math.round(json1.routes[0].duration / 60));
               setLiveEta(mins);
-              setCountdownSeconds(mins * 60);
             }
             if (json1.routes[0].distance) {
               setLiveDistance(Number((json1.routes[0].distance / 1000).toFixed(1)));
@@ -260,7 +296,7 @@ function TrackingScreen({ data, onBack }) {
 
     enhanceWithOSRM();
     return () => { isMounted = false; };
-  }, [data, resolvedAmbulanceLoc]);
+  }, [data, initialAmbulanceLoc]);
 
   // Socket.IO real-time tracking subscription & event listener lifecycle
   useEffect(() => {
@@ -286,7 +322,7 @@ function TrackingScreen({ data, onBack }) {
       });
       socket.emit('start_tracking', {
         emergency_id: data.emergency_id,
-        ambulance_location: resolvedAmbulanceLoc,
+        ambulance_location: initialAmbulanceLoc,
         patient_location: data.patient_location,
         hospital_location: data.hospital.location
       });
@@ -321,7 +357,6 @@ function TrackingScreen({ data, onBack }) {
       if (snapshot.phase) setJourneyPhase(snapshot.phase);
       if (snapshot.eta !== undefined) {
         setLiveEta(snapshot.eta);
-        setCountdownSeconds(snapshot.eta * 60);
       }
       if (snapshot.distanceKm !== undefined) setLiveDistance(snapshot.distanceKm);
       else if (snapshot.distance_km !== undefined) setLiveDistance(snapshot.distance_km);
@@ -371,7 +406,6 @@ function TrackingScreen({ data, onBack }) {
       if (update.phase) setJourneyPhase(update.phase);
       if (update.eta !== undefined) {
         setLiveEta(update.eta);
-        setCountdownSeconds(update.eta * 60);
       }
       if (update.distanceKm !== undefined) setLiveDistance(update.distanceKm);
       else if (update.distance_km !== undefined) setLiveDistance(update.distance_km);
@@ -421,7 +455,6 @@ function TrackingScreen({ data, onBack }) {
       setTrackingState('stopped');
       setLiveEta(0);
       setLiveDistance(0.0);
-      setCountdownSeconds(0);
     });
 
     return () => {
@@ -437,7 +470,7 @@ function TrackingScreen({ data, onBack }) {
       socket.off('ambulance_arrived');
       socket.disconnect();
     };
-  }, [data, resolvedAmbulanceLoc, activeAmbulance.id]);
+  }, [data, initialAmbulanceLoc, activeAmbulance.id]);
 
   // Live dynamic route line updating as the ambulance travels in real-time
   useEffect(() => {
@@ -456,12 +489,20 @@ function TrackingScreen({ data, onBack }) {
   const formatCountdown = () => {
     if (ambulanceStatus.includes('Arrived at Hospital')) return 'Arrived';
     if (ambulanceStatus.includes('At Patient')) return 'At Patient';
-    if (countdownSeconds && countdownSeconds > 0) {
-      const m = Math.floor(countdownSeconds / 60);
-      const s = countdownSeconds % 60;
-      return m > 0 ? `${m}m ${s < 10 ? '0' : ''}${s}s` : `${s}s`;
+    if (liveEta !== null && liveEta !== undefined) {
+      if (liveEta <= 1) return '< 1 min';
+      return `${liveEta} mins`;
     }
-    return `${liveEta} mins`;
+    return `${data.eta || 5} mins`;
+  };
+
+  const formatDistance = () => {
+    if (liveDistance !== null && liveDistance !== undefined) {
+      return liveDistance >= 1
+        ? `${liveDistance} km`
+        : `${Math.round(liveDistance * 1000)} m`;
+    }
+    return `${data.distance || 'Calculating...'} km`;
   };
 
   const center = [data.patient_location.lat, data.patient_location.lng];
@@ -502,6 +543,14 @@ function TrackingScreen({ data, onBack }) {
           </div>
         )}
 
+        {/* Patient GPS Warning Banner */}
+        {patientGpsError && (
+          <div style={{ background: '#fee2e2', border: '1px solid #f87171', color: '#991b1b', padding: '12px 20px', borderRadius: '12px', marginBottom: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span>⚠️</span>
+            <span>{patientGpsError}</span>
+          </div>
+        )}
+
         {/* Live Navigation & Telemetry Bar */}
         <div className="live-nav-banner">
           <div className="live-nav-left">
@@ -522,7 +571,7 @@ function TrackingScreen({ data, onBack }) {
           </div>
           <div className="live-nav-right">
             <span className="live-nav-chip">⏱️ Remaining: <strong>{formatCountdown()}</strong></span>
-            <span className="live-nav-chip">📏 Distance: <strong>{liveDistance} km</strong></span>
+            <span className="live-nav-chip">📏 Distance: <strong>{formatDistance()}</strong></span>
             {telemetry.accuracy !== null && (
               <span className="live-nav-chip" title="GPS Horizontal Accuracy">🎯 ±{telemetry.accuracy}m</span>
             )}

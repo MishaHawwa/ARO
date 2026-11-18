@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import io from 'socket.io-client';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -87,36 +87,82 @@ export default function AmbulanceApp() {
   const [socket, setSocket] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, assigned, en_route_to_patient, en_route_to_hospital, arrived_at_hospital
   const [assignment, setAssignment] = useState(null);
-  const [myLocation, setMyLocation] = useState({ lat: 12.8725, lng: 74.8440 });
-  const [routeInfo, setRouteInfo] = useState({ distanceKm: null, etaMins: null });
-  const [countdownSeconds, setCountdownSeconds] = useState(null);
+  const [myLocation, setMyLocation] = useState(null);
+  const [gpsPermissionError, setGpsPermissionError] = useState(null);
+  const [routeInfo, setRouteInfo] = useState({ distanceKm: null, distanceMeters: null, etaMins: null, etaSeconds: null });
 
-  // Dynamic 1-second countdown timer
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCountdownSeconds((prev) => {
-        if (prev === null || prev <= 0) return 0;
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // GPS Tracking
-  // Initial location quick fix
-  useEffect(() => {
-    if (!navigator.geolocation) return;
+  // Direct device GPS acquisition (strictly real device coordinates, high accuracy, zero cache)
+  const requestDeviceGps = useCallback(() => {
+    if (!navigator.geolocation) {
+      setGpsPermissionError('Geolocation is not supported by your browser or device.');
+      return;
+    }
+    setGpsPermissionError(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setMyLocation({
+        const coords = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude
-        });
+        };
+        setMyLocation(coords);
+        setGpsPermissionError(null);
+        if (socket && socket.connected) {
+          socket.emit('update_location', {
+            ambulance_id: ambulanceId,
+            ambulanceId,
+            lat: coords.lat,
+            lng: coords.lng,
+            latitude: coords.lat,
+            longitude: coords.lng,
+            speed: pos.coords.speed || 0,
+            heading: pos.coords.heading || 0,
+            accuracy: pos.coords.accuracy,
+            timestamp: new Date().toISOString()
+          });
+        }
+        fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/location`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ambulance_id: ambulanceId,
+            lat: coords.lat,
+            lng: coords.lng,
+            speed: pos.coords.speed || 0,
+            heading: pos.coords.heading || 0,
+            accuracy: pos.coords.accuracy
+          })
+        }).catch(err => console.warn('Could not post initial ambulance location:', err));
       },
-      (err) => console.warn("GPS Initial fix warning:", err),
-      { enableHighAccuracy: false, timeout: 2500, maximumAge: 60000 }
+      (err) => {
+        let msg = 'Unable to obtain GPS signal.';
+        if (err.code === 1) msg = 'Location permission denied. Please enable location access in browser settings to track ambulance.';
+        else if (err.code === 2) msg = 'Position unavailable. Please ensure GPS is active on your device.';
+        else if (err.code === 3) msg = 'GPS request timed out. Retrying...';
+        setGpsPermissionError(msg);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
-  }, []);
+  }, [ambulanceId, socket]);
+
+  // Request real hardware GPS immediately on mount and start high-accuracy continuous watch
+  useEffect(() => {
+    requestDeviceGps();
+    if (!navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setMyLocation(coords);
+        setGpsPermissionError(null);
+      },
+      (err) => {
+        if (err.code === 1) {
+          setGpsPermissionError('Location permission denied. GPS tracking unavailable.');
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [requestDeviceGps]);
 
   // WebSocket Connection
   useEffect(() => {
@@ -130,7 +176,12 @@ export default function AmbulanceApp() {
 
       newSocket.on('connect', () => {
         console.log('Ambulance connected to backend:', ambulanceId);
-        newSocket.emit('join_ambulance', { ambulance_id: ambulanceId, ambulanceId });
+        newSocket.emit('join_ambulance', {
+          ambulance_id: ambulanceId,
+          ambulanceId,
+          lat: myLocation?.lat,
+          lng: myLocation?.lng
+        });
       });
 
       newSocket.on('new_assignment', (data) => {
@@ -139,12 +190,19 @@ export default function AmbulanceApp() {
         setStatus('assigned');
         const tripId = data.trip_id || `trip_${data.emergency_id}`;
         newSocket.emit('join_trip', { tripId });
-        if (data.eta) {
-          setRouteInfo(prev => ({ ...prev, etaMins: data.eta }));
-          setCountdownSeconds(data.eta * 60);
+        if (data.eta !== undefined) {
+          setRouteInfo(prev => ({
+            ...prev,
+            etaMins: data.eta,
+            etaSeconds: data.eta_seconds || (data.eta * 60)
+          }));
         }
-        if (data.distance) {
-          setRouteInfo(prev => ({ ...prev, distanceKm: data.distance }));
+        if (data.distance !== undefined || data.distance_km !== undefined) {
+          setRouteInfo(prev => ({
+            ...prev,
+            distanceKm: data.distance || data.distance_km,
+            distanceMeters: data.distance_meters || (data.distance ? Math.round(data.distance * 1000) : null)
+          }));
         }
         if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
       });
@@ -160,38 +218,59 @@ export default function AmbulanceApp() {
             }) : prev);
           }
         }
-        if (update.eta !== undefined) {
-          setRouteInfo(prev => ({ ...prev, etaMins: update.eta }));
-          setCountdownSeconds(update.eta * 60);
+        if (update.eta !== undefined || update.eta_seconds !== undefined) {
+          setRouteInfo(prev => ({
+            ...prev,
+            etaMins: update.eta !== undefined ? update.eta : Math.max(1, Math.round(update.eta_seconds / 60)),
+            etaSeconds: update.eta_seconds ?? prev.etaSeconds
+          }));
         }
-        if (update.distanceKm !== undefined || update.distance_km !== undefined) {
-          setRouteInfo(prev => ({ ...prev, distanceKm: update.distanceKm || update.distance_km }));
+        if (update.distance_km !== undefined || update.distanceKm !== undefined || update.distance_meters !== undefined) {
+          setRouteInfo(prev => ({
+            ...prev,
+            distanceKm: update.distance_km ?? update.distanceKm ?? prev.distanceKm,
+            distanceMeters: update.distance_meters ?? update.distanceMeters ?? prev.distanceMeters
+          }));
         }
       });
 
       newSocket.on('ambulance:location:updated', (update) => {
-        if (update.eta !== undefined) {
-          setRouteInfo(prev => ({ ...prev, etaMins: update.eta }));
-          setCountdownSeconds(update.eta * 60);
+        if (update.eta !== undefined || update.eta_seconds !== undefined) {
+          setRouteInfo(prev => ({
+            ...prev,
+            etaMins: update.eta !== undefined ? update.eta : Math.max(1, Math.round(update.eta_seconds / 60)),
+            etaSeconds: update.eta_seconds ?? prev.etaSeconds
+          }));
         }
-        if (update.distanceKm !== undefined) {
-          setRouteInfo(prev => ({ ...prev, distanceKm: update.distanceKm }));
+        if (update.distance_km !== undefined || update.distanceKm !== undefined || update.distance_meters !== undefined) {
+          setRouteInfo(prev => ({
+            ...prev,
+            distanceKm: update.distance_km ?? update.distanceKm ?? prev.distanceKm,
+            distanceMeters: update.distance_meters ?? update.distanceMeters ?? prev.distanceMeters
+          }));
         }
       });
 
       newSocket.on('ambulance_update', (update) => {
-        if (update.eta !== undefined) {
-          setRouteInfo(prev => ({ ...prev, etaMins: update.eta }));
-          setCountdownSeconds(update.eta * 60);
+        if (update.eta !== undefined || update.eta_seconds !== undefined) {
+          setRouteInfo(prev => ({
+            ...prev,
+            etaMins: update.eta !== undefined ? update.eta : Math.max(1, Math.round(update.eta_seconds / 60)),
+            etaSeconds: update.eta_seconds ?? prev.etaSeconds
+          }));
         }
-        if (update.distance_km !== undefined) {
-          setRouteInfo(prev => ({ ...prev, distanceKm: update.distance_km }));
+        if (update.distance_km !== undefined || update.distanceKm !== undefined || update.distance_meters !== undefined) {
+          setRouteInfo(prev => ({
+            ...prev,
+            distanceKm: update.distance_km ?? update.distanceKm ?? prev.distanceKm,
+            distanceMeters: update.distance_meters ?? update.distanceMeters ?? prev.distanceMeters
+          }));
         }
       });
       
       return () => newSocket.close();
     }
-  }, [isLoggedIn, ambulanceId]);
+  }, [isLoggedIn, ambulanceId, myLocation?.lat, myLocation?.lng]);
 
   // Genuine Real-Time Browser GPS Tracking via Reusable Hook
   const {
@@ -319,12 +398,21 @@ export default function AmbulanceApp() {
   };
 
   const formatDriverCountdown = () => {
-    if (countdownSeconds && countdownSeconds > 0) {
-      const m = Math.floor(countdownSeconds / 60);
-      const s = countdownSeconds % 60;
-      return m > 0 ? `${m}m ${s < 10 ? '0' : ''}${s}s` : `${s}s`;
+    if (status === 'arrived_at_hospital') return 'Arrived';
+    if (routeInfo.etaMins !== null && routeInfo.etaMins !== undefined) {
+      if (routeInfo.etaMins <= 1) return '< 1 min';
+      return `${routeInfo.etaMins} mins`;
     }
-    return routeInfo.etaMins ? `${routeInfo.etaMins} mins` : `${assignment?.eta || 5} mins`;
+    return assignment?.eta ? `${assignment.eta} mins` : 'Calculating...';
+  };
+
+  const formatDistance = () => {
+    if (routeInfo.distanceKm !== null && routeInfo.distanceKm !== undefined) {
+      return routeInfo.distanceKm >= 1
+        ? `${routeInfo.distanceKm} km`
+        : `${routeInfo.distanceMeters || Math.round(routeInfo.distanceKm * 1000)} m`;
+    }
+    return assignment?.distance ? `${assignment.distance} km` : 'Calculating...';
   };
 
   const renderStatusBadge = () => {
@@ -391,6 +479,13 @@ export default function AmbulanceApp() {
 
       {/* Main Content */}
       <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
+
+        {gpsPermissionError && (
+          <div style={{ background: '#fee2e2', border: '1px solid #ef4444', color: '#991b1b', padding: '14px 20px', borderRadius: '12px', marginBottom: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 8px rgba(239, 68, 68, 0.15)' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>⚠️ {gpsPermissionError}</div>
+            <button onClick={requestDeviceGps} style={{ background: '#b91c1c', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Retry GPS</button>
+          </div>
+        )}
 
         {status === 'idle' && (
           <div style={{ padding: '80px 40px', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', background: 'white', borderRadius: '16px', border: '1px solid #eee', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
@@ -569,7 +664,7 @@ export default function AmbulanceApp() {
               <div style={{ background: 'white', padding: '16px 20px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #059669', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
                 <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Remaining Distance</div>
                 <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#065f46', marginTop: '4px' }}>
-                  📏 {routeInfo.distanceKm !== null ? `${routeInfo.distanceKm} km` : `${assignment?.distance || 'Calculating...'} km`}
+                  📏 {formatDistance()}
                 </div>
               </div>
               <div style={{ background: 'white', padding: '16px 20px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #d97706', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
@@ -582,12 +677,18 @@ export default function AmbulanceApp() {
 
             {/* Map Card */}
             <div style={{ height: '540px', borderRadius: '16px', overflow: 'hidden', border: '1px solid #e0e0e0', boxShadow: '0 4px 20px rgba(0,0,0,0.07)' }}>
-              <MapContainer center={[myLocation.lat, myLocation.lng]} zoom={13} style={{ height: '100%', width: '100%' }}>
+              <MapContainer 
+                center={myLocation ? [myLocation.lat, myLocation.lng] : [assignment.patient_location.lat, assignment.patient_location.lng]} 
+                zoom={13} 
+                style={{ height: '100%', width: '100%' }}
+              >
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                <MapRecenter center={[myLocation.lat, myLocation.lng]} />
-                <Marker position={[myLocation.lat, myLocation.lng]}>
-                  <Popup>Ambulance (Your Current Position)</Popup>
-                </Marker>
+                {myLocation && <MapRecenter center={[myLocation.lat, myLocation.lng]} />}
+                {myLocation && (
+                  <Marker position={[myLocation.lat, myLocation.lng]}>
+                    <Popup>Ambulance (Your Current Position)</Popup>
+                  </Marker>
+                )}
                 {assignment?.patient_location && (
                   <Marker position={[assignment.patient_location.lat, assignment.patient_location.lng]}>
                     <Popup>Patient Location</Popup>

@@ -951,7 +951,11 @@ def handle_emergency():
     emergency_type = data.get('type', 'General Medical')
     patient_location = data.get('location')
     if not patient_location or not isinstance(patient_location, dict) or 'lat' not in patient_location or 'lng' not in patient_location:
-        patient_location = {'lat': 12.8725, 'lng': 74.8440}
+        return jsonify({'error': 'Valid patient GPS coordinates (lat, lng) are required to create an emergency.'}), 400
+    valid_p, p_lat, p_lng = validate_coordinates(patient_location.get('lat'), patient_location.get('lng'))
+    if not valid_p:
+        return jsonify({'error': 'Invalid patient GPS coordinates.'}), 400
+    patient_location = {'lat': p_lat, 'lng': p_lng}
     
     # Find best hospital
     hospitals = fetch_hospitals()
@@ -1014,14 +1018,6 @@ def handle_emergency():
     
     # Calculate ETA with realistic factors for Bhatkal/Mangalore
     distance_to_patient = calculate_distance(nearest_ambulance['location'], patient_location)
-    if distance_to_patient < 1.0:
-        # Distance too close for testing (same device/location) - station ~2.1km away
-        nearest_ambulance['location'] = {
-            'lat': patient_location['lat'] - 0.015,
-            'lng': patient_location['lng'] - 0.012
-        }
-        distance_to_patient = calculate_distance(nearest_ambulance['location'], patient_location)
-
     distance_to_hospital = calculate_distance(patient_location, best_hospital['location'])
     
     # Current time factor for traffic
@@ -1039,6 +1035,8 @@ def handle_emergency():
     eta_to_patient = predict_eta(distance_to_patient, traffic_factor, time_factor)
     eta_to_hospital = predict_eta(distance_to_hospital, traffic_factor, time_factor)
     total_eta = eta_to_patient + eta_to_hospital
+    distance_to_patient_m = int(round(distance_to_patient * 1000.0))
+    eta_to_patient_s = int(round(eta_to_patient * 60))
     
     # Get emergency details
     emergency_details = emergency_requirements.get(emergency_type, {})
@@ -1068,8 +1066,11 @@ def handle_emergency():
         },
         'patient_location': patient_location,
         'eta': eta_to_patient,
+        'eta_seconds': eta_to_patient_s,
         'total_eta': total_eta,
         'distance': round(distance_to_patient, 2),
+        'distance_km': round(distance_to_patient, 2),
+        'distance_meters': distance_to_patient_m,
         'distance_to_hospital': round(distance_to_hospital, 2),
         'ai_suggestions': suggestions,
         'hospital_scores': hospital_scores,
@@ -1095,7 +1096,11 @@ def handle_emergency():
         'phase': 'to_patient',
         'driver_status': 'notified',
         'eta': eta_to_patient,
+        'eta_seconds': eta_to_patient_s,
         'distance_km': round(distance_to_patient, 2),
+        'distance_meters': distance_to_patient_m,
+        'remaining_distance_meters': distance_to_patient_m,
+        'remaining_eta_seconds': eta_to_patient_s,
         'tracking': {
             'status': 'waiting',
             'latest_location': {
@@ -1138,6 +1143,14 @@ def handle_emergency():
     notify_ambulance(nearest_ambulance, response)
 
     return jsonify(response)
+
+@app.route('/api/hospital/verify-passcode', methods=['POST'])
+def verify_hospital_passcode():
+    data = request.json or {}
+    passcode = str(data.get('passcode', '')).strip()
+    if passcode == '1234':
+        return jsonify({'valid': True, 'message': 'Hospital access granted'})
+    return jsonify({'valid': False, 'error': 'Invalid passcode'}), 401
 
 @app.route('/api/hospitals', methods=['GET'])
 def get_hospitals():
@@ -1327,6 +1340,23 @@ def process_location_update(data):
     if not valid_coords:
         return False, {'code': 'INVALID_COORDINATES', 'message': f'Coordinates ({lat}, {lng}) outside valid range [-90..90, -180..180]'}
 
+    # Extract accuracy, heading, speed early
+    accuracy = data.get('accuracy')
+    heading = data.get('heading')
+    speed = data.get('speed')
+    try:
+        accuracy = round(float(accuracy), 1) if accuracy is not None else None
+    except (ValueError, TypeError):
+        accuracy = None
+    try:
+        heading = round(float(heading), 1) if heading is not None else None
+    except (ValueError, TypeError):
+        heading = None
+    try:
+        speed = round(float(speed), 1) if speed is not None else None
+    except (ValueError, TypeError):
+        speed = None
+
     # Find emergency
     active = ACTIVE_EMERGENCIES.get(emergency_id)
     if not active and amb_id:
@@ -1337,6 +1367,21 @@ def process_location_update(data):
                 break
 
     if not active:
+        # If no active emergency, check if this is an idle ambulance updating its real GPS
+        fleet_amb = next((a for a in fetch_ambulances() if a['id'] == amb_id), None)
+        if fleet_amb:
+            fleet_amb['location'] = {'lat': lat, 'lng': lng}
+            if heading is not None:
+                fleet_amb['heading'] = heading
+            if speed is not None:
+                fleet_amb['speed'] = speed
+            update_ambulance_status(amb_id, {'location_lat': lat, 'location_lng': lng})
+            return True, {
+                'code': 'IDLE_LOCATION_UPDATED',
+                'ambulance_id': amb_id,
+                'location': {'lat': lat, 'lng': lng},
+                'message': 'Ambulance location updated in fleet inventory'
+            }
         return False, {'code': 'EMERGENCY_NOT_FOUND', 'message': f'No active emergency found for ID: {emergency_id}'}
 
     # 1. Assignment check: must be assigned ambulance
@@ -1385,32 +1430,33 @@ def process_location_update(data):
     # 5. Plausibility / jump check (only between consecutive device GPS updates)
     prev_loc = tracking.get('latest_location')
     prev_device_ts = tracking.get('device_timestamp')
-    if prev_device_ts and prev_loc and 'lat' in prev_loc and 'lng' in prev_loc:
+    displacement_meters = 0.0
+    if prev_loc and 'lat' in prev_loc and 'lng' in prev_loc:
         dist_jump_km = calculate_distance({'lat': lat, 'lng': lng}, {'lat': prev_loc['lat'], 'lng': prev_loc['lng']})
-        time_delta_s = max(0.2, (parsed_device_ts - prev_device_ts) if parsed_device_ts else (now_time - (tracking.get('server_timestamp') or now_time)))
-        implied_speed_kmh = (dist_jump_km / (time_delta_s / 3600.0))
-        if implied_speed_kmh > 250.0 and dist_jump_km > 1.0:
-            return False, {'code': 'IMPOSSIBLE_JUMP', 'message': f'Implied speed {round(implied_speed_kmh)} km/h exceeds 250 km/h threshold'}
+        displacement_meters = dist_jump_km * 1000.0
+        if prev_device_ts and parsed_device_ts:
+            time_delta_s = max(0.2, (parsed_device_ts - prev_device_ts))
+            implied_speed_kmh = (dist_jump_km / (time_delta_s / 3600.0))
+            if implied_speed_kmh > 250.0 and dist_jump_km > 1.0:
+                return False, {'code': 'IMPOSSIBLE_JUMP', 'message': f'Implied speed {round(implied_speed_kmh)} km/h exceeds 250 km/h threshold'}
 
     # Reading accepted - record rate limit timestamp
     _ambulance_rate_limits[amb_id] = now_time
 
-    # Extract accuracy, heading, speed
-    accuracy = data.get('accuracy')
-    heading = data.get('heading')
-    speed = data.get('speed')
-    try:
-        accuracy = round(float(accuracy), 1) if accuracy is not None else None
-    except (ValueError, TypeError):
-        accuracy = None
-    try:
-        heading = round(float(heading), 1) if heading is not None else None
-    except (ValueError, TypeError):
-        heading = None
-    try:
-        speed = round(float(speed), 1) if speed is not None else None
-    except (ValueError, TypeError):
-        speed = None
+    # Stationary detection (Google Maps navigation behavior):
+    # If device speed < 1.0 m/s (approx 3.6 km/h) or displacement from last reading < 5.0 meters
+    is_stationary = False
+    if speed is not None:
+        try:
+            raw_speed = float(speed)
+            if raw_speed < 1.0:
+                is_stationary = True
+            elif raw_speed < 3.6 and displacement_meters < 5.0:
+                is_stationary = True
+        except (ValueError, TypeError):
+            pass
+    elif prev_loc and displacement_meters < 5.0:
+        is_stationary = True
 
     # Update in-memory state
     current_loc_dict = {
@@ -1449,13 +1495,58 @@ def process_location_update(data):
         target = active.get('patient_location')
         display_status = 'En Route to Patient'
 
-    remaining_dist = None
-    remaining_eta = None
-    if target and 'lat' in target and 'lng' in target:
-        remaining_dist = round(calculate_distance({'lat': lat, 'lng': lng}, target), 2)
-        remaining_eta = max(1, round(remaining_dist * 2.0))
-        active['distance_km'] = remaining_dist
-        active['eta'] = remaining_eta
+    remaining_dist_km = None
+    remaining_dist_meters = None
+    remaining_eta_seconds = None
+    remaining_eta_minutes = None
+
+    if is_stationary and active.get('remaining_distance_meters') is not None and active.get('remaining_eta_seconds') is not None:
+        # Stationary: KEEP CONSTANT - Never tick down or reduce distance/ETA when stationary!
+        remaining_dist_meters = active['remaining_distance_meters']
+        remaining_dist_km = active.get('distance_km', round(remaining_dist_meters / 1000.0, 2))
+        remaining_eta_seconds = active['remaining_eta_seconds']
+        remaining_eta_minutes = active.get('eta', max(1, round(remaining_eta_seconds / 60)))
+    else:
+        # Moving or initial calculation: compute remaining distance along road
+        if target and 'lat' in target and 'lng' in target:
+            crow_flies_km = calculate_distance({'lat': lat, 'lng': lng}, target)
+            road_dist_km = max(0.05, crow_flies_km * 1.25)
+            remaining_dist_km = round(road_dist_km, 2)
+            remaining_dist_meters = int(round(road_dist_km * 1000.0))
+
+            current_hour = datetime.now().hour
+            if 7 <= current_hour <= 9 or 17 <= current_hour <= 19:
+                traffic_speed_kmh = 28.0
+            elif 10 <= current_hour <= 16:
+                traffic_speed_kmh = 35.0
+            else:
+                traffic_speed_kmh = 45.0
+
+            if speed is not None:
+                try:
+                    s_val = float(speed)
+                    actual_speed_kmh = (s_val * 3.6) if s_val < 50 else s_val
+                    if actual_speed_kmh >= 3.6:
+                        effective_speed_kmh = max(20.0, min(80.0, traffic_speed_kmh * 0.4 + actual_speed_kmh * 0.6))
+                    else:
+                        effective_speed_kmh = traffic_speed_kmh
+                except (ValueError, TypeError):
+                    effective_speed_kmh = traffic_speed_kmh
+            else:
+                effective_speed_kmh = traffic_speed_kmh
+
+            remaining_eta_seconds = max(30, int(round((road_dist_km / effective_speed_kmh) * 3600.0)))
+            remaining_eta_minutes = max(1, int(round(remaining_eta_seconds / 60.0)))
+
+            active['remaining_distance_meters'] = remaining_dist_meters
+            active['remaining_eta_seconds'] = remaining_eta_seconds
+            active['distance_km'] = remaining_dist_km
+            active['eta'] = remaining_eta_minutes
+        else:
+            remaining_dist_km = active.get('distance_km', 2.0)
+            remaining_dist_meters = int(remaining_dist_km * 1000)
+            remaining_eta_minutes = active.get('eta', 5)
+            remaining_eta_seconds = remaining_eta_minutes * 60
 
     trip_id = f"trip_{emergency_id}"
     payload = {
@@ -1477,9 +1568,14 @@ def process_location_update(data):
         'timestamp': iso_timestamp,
         'status': display_status,
         'phase': phase,
-        'eta': remaining_eta if remaining_eta is not None else active.get('eta', 5),
-        'distanceKm': remaining_dist if remaining_dist is not None else active.get('distance_km', 2.0),
-        'distance_km': remaining_dist if remaining_dist is not None else active.get('distance_km', 2.0),
+        'is_stationary': is_stationary,
+        'stationary': is_stationary,
+        'eta': remaining_eta_minutes,
+        'eta_seconds': remaining_eta_seconds,
+        'distanceKm': remaining_dist_km,
+        'distance_km': remaining_dist_km,
+        'distanceMeters': remaining_dist_meters,
+        'distance_meters': remaining_dist_meters,
         'isRealtime': True,
         'is_realtime': True
     }
@@ -1610,13 +1706,21 @@ def handle_update_location(data):
             active['patient_location'] = {'lat': lat, 'lng': lng}
             amb_loc = active.get('ambulance_location') or active.get('tracking', {}).get('latest_location')
             if amb_loc and 'lat' in amb_loc and 'lng' in amb_loc:
-                dist = round(calculate_distance(amb_loc, {'lat': lat, 'lng': lng}), 2)
-                eta = max(1, round(dist * 2.0))
+                crow_flies = calculate_distance(amb_loc, {'lat': lat, 'lng': lng})
+                road_dist = max(0.05, crow_flies * 1.25)
+                dist = round(road_dist, 2)
+                dist_m = int(round(road_dist * 1000.0))
+                eta_s = max(30, int(round((road_dist / 35.0) * 3600.0)))
+                eta = max(1, int(round(eta_s / 60.0)))
+                active['remaining_distance_meters'] = dist_m
+                active['remaining_eta_seconds'] = eta_s
                 active['distance_km'] = dist
                 active['eta'] = eta
             else:
                 dist = active.get('distance_km', 2.0)
+                dist_m = int(dist * 1000)
                 eta = active.get('eta', 5)
+                eta_s = eta * 60
 
             broadcast_payload = {
                 'tripId': trip_room,
@@ -1632,7 +1736,10 @@ def handle_update_location(data):
                 'patientLocation': {'lat': lat, 'lng': lng},
                 'distance_km': dist,
                 'distanceKm': dist,
+                'distance_meters': dist_m,
+                'distanceMeters': dist_m,
                 'eta': eta,
+                'eta_seconds': eta_s,
                 'timestamp': data.get('timestamp') or get_utc_iso()
             }
             socketio.emit('location_broadcast', broadcast_payload, room=trip_room)
@@ -1911,10 +2018,24 @@ def notify_ambulance(ambulance, response):
 
 @socketio.on('join_ambulance')
 def handle_join_ambulance(data):
-    ambulance_id = data.get('ambulance_id') or data.get('ambulanceId')
+    if not isinstance(data, dict):
+        ambulance_id = str(data) if data else None
+        data = {}
+    else:
+        ambulance_id = data.get('ambulance_id') or data.get('ambulanceId')
     if ambulance_id:
         join_room(f"ambulance:{ambulance_id}")
         join_room(f"ambulance_{ambulance_id}")
+        lat = data.get('lat') if data.get('lat') is not None else data.get('latitude')
+        lng = data.get('lng') if data.get('lng') is not None else data.get('longitude')
+        if lat is not None and lng is not None:
+            valid, lat, lng = validate_coordinates(lat, lng)
+            if valid:
+                for a in fetch_ambulances():
+                    if a['id'] == ambulance_id:
+                        a['location'] = {'lat': lat, 'lng': lng}
+                        break
+                update_ambulance_status(ambulance_id, {'location_lat': lat, 'location_lng': lng})
         emit('joined', {'ambulance_id': ambulance_id})
 
 @socketio.on('join_hospital')
