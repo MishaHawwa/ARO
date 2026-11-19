@@ -24,14 +24,14 @@ try {
 }
 
 const FLEET_UNITS = [
-  { id: 'b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0', alias: 'Unit KA-B2D0', label: 'Mangalore Central' },
-  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0002', alias: 'Unit KA-A1C0', label: 'Mangalore Kadri' },
-  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0003', alias: 'Unit KA-A1C1', label: 'Mangalore Kankanady' },
-  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0004', alias: 'Unit KA-A1C2', label: 'Mangalore Deralakatte' },
+  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0007', alias: 'Unit KA-B1C0', label: 'Bhatkal Main Road' },
+  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0008', alias: 'Unit KA-B1C1', label: 'Bhatkal Coastal' },
+  { id: 'b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0', alias: 'Unit KA-B2D0', label: 'Bhatkal Emergency Unit' },
+  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0009', alias: 'Unit KA-B1C2', label: 'Bhatkal Taluk Hospital' },
   { id: 'h1c0d054-8d8a-42d6-b4fc-aecfb77f0005', alias: 'Unit KA-H1C0', label: 'Honnavar Port' },
   { id: 'h1c0d054-8d8a-42d6-b4fc-aecfb77f0006', alias: 'Unit KA-H1C1', label: 'Honnavar Taluk Center' },
-  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0007', alias: 'Unit KA-B1C0', label: 'Bhatkal Main Road' },
-  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0008', alias: 'Unit KA-B1C1', label: 'Bhatkal Coastal' }
+  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0002', alias: 'Unit KA-A1C0', label: 'Mangalore Kadri' },
+  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0003', alias: 'Unit KA-A1C1', label: 'Mangalore Kankanady' }
 ];
 
 function generateRoadWaypoints(start, end) {
@@ -80,7 +80,7 @@ function MapRecenter({ center }) {
 
 export default function AmbulanceApp() {
   const params = new URLSearchParams(window.location.search);
-  const initialAmbId = params.get('id') || 'b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0';
+  const initialAmbId = params.get('id') || 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0007';
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [ambulanceId, setAmbulanceId] = useState(initialAmbId);
@@ -286,7 +286,7 @@ export default function AmbulanceApp() {
     emergencyId: assignment?.emergency_id || assignment?.emergencyId,
     trackingToken: assignment?.tracking_token || assignment?.trackingToken,
     status,
-    enabled: status === 'en_route_to_patient' || status === 'en_route_to_hospital',
+    enabled: isLoggedIn,
     transmissionInterval: 2500,
     minDistanceMeters: 3.0,
     onLocationUpdate: ({ location }) => {

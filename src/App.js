@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Dashboard from './components/Dashboard';
 import LoadingScreen from './components/LoadingScreen';
 import TrackingScreen from './components/TrackingScreen';
@@ -9,21 +9,19 @@ function CitizenApp() {
   const [screen, setScreen] = useState('dashboard'); // dashboard, loading, tracking
   const [emergencyData, setEmergencyData] = useState(null);
   const [selectedEmergency, setSelectedEmergency] = useState(null);
-  const [userLocation, setUserLocation] = useState(() => {
-    try {
-      const cached = localStorage.getItem('cached_user_location');
-      if (cached) return JSON.parse(cached);
-    } catch (e) {}
-    return null;
-  });
+  const [userLocation, setUserLocation] = useState(null);
   const [gpsError, setGpsError] = useState(null);
+  const [isAcquiringGps, setIsAcquiringGps] = useState(false);
 
-  useEffect(() => {
+  const requestGpsLocation = useCallback((onSuccess, onError) => {
     if (!navigator.geolocation) {
-      setGpsError('Geolocation is not supported by your browser or device.');
+      const msg = 'Geolocation is not supported by your browser or device.';
+      setGpsError(msg);
+      if (onError) onError(msg);
       return;
     }
 
+    setGpsError(null);
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const loc = {
@@ -32,16 +30,28 @@ function CitizenApp() {
         };
         setUserLocation(loc);
         setGpsError(null);
-        try { localStorage.setItem('cached_user_location', JSON.stringify(loc)); } catch (e) {}
+        if (onSuccess) onSuccess(loc);
       },
       (error) => {
-        let msg = 'Unable to fetch current GPS location.';
-        if (error.code === 1) msg = 'Location permission denied. Please allow location access in your browser settings to detect your emergency location.';
-        else if (error.code === 3) msg = 'GPS signal request timed out. Retrying in background...';
+        let msg = 'Waiting for real device GPS lock — please allow Location access.';
+        if (error.code === 1) {
+          msg = 'Location permission denied. Please allow location access in your browser settings to detect your emergency location.';
+        } else if (error.code === 2) {
+          msg = 'GPS signal unavailable. Please ensure GPS/Location is enabled on your device.';
+        } else if (error.code === 3) {
+          msg = 'GPS request timed out. Retrying high-accuracy signal...';
+        }
         setGpsError(msg);
+        if (onError) onError(msg);
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
+  }, []);
+
+  useEffect(() => {
+    requestGpsLocation();
+
+    if (!navigator.geolocation) return;
 
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
@@ -51,16 +61,17 @@ function CitizenApp() {
         };
         setUserLocation(loc);
         setGpsError(null);
-        try { localStorage.setItem('cached_user_location', JSON.stringify(loc)); } catch (e) {}
       },
       (error) => {
-        if (error.code === 1) setGpsError('Location permission denied. Live GPS unavailable.');
+        if (error.code === 1) {
+          setGpsError('Location permission denied. Live GPS tracking unavailable.');
+        }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+  }, [requestGpsLocation]);
 
   const handleEmergencySelect = (emergencyType) => {
     setSelectedEmergency(emergencyType);
@@ -104,20 +115,16 @@ function CitizenApp() {
     if (userLocation) {
       sendEmergencyDispatch(userLocation);
     } else {
-      if (!navigator.geolocation) {
-        alert('Geolocation is not supported by your device. Cannot dispatch emergency.');
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const freshLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          setUserLocation(freshLoc);
+      setIsAcquiringGps(true);
+      requestGpsLocation(
+        (freshLoc) => {
+          setIsAcquiringGps(false);
           sendEmergencyDispatch(freshLoc);
         },
-        () => {
-          alert('GPS location permission is strictly required to locate and dispatch an ambulance to you. Please enable location permissions in your browser.');
-        },
-        { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+        (errorMsg) => {
+          setIsAcquiringGps(false);
+          alert(`Cannot dispatch emergency without GPS coordinates:\n\n${errorMsg}\n\nPlease enable Location permissions and try again.`);
+        }
       );
     }
   };
@@ -130,17 +137,70 @@ function CitizenApp() {
 
   return (
     <div className="App">
-      {gpsError && screen === 'dashboard' && (
-        <div style={{ background: '#fee2e2', border: '1px solid #ef4444', color: '#991b1b', padding: '12px 20px', textAlign: 'center', fontWeight: 'bold', fontSize: '0.9rem' }}>
-          ⚠️ {gpsError}
+      {isAcquiringGps && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.7)',
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'white',
+          padding: 24,
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: '3rem', marginBottom: 16 }}>📡</div>
+          <h2 style={{ margin: '0 0 10px 0' }}>Acquiring Live GPS Signal...</h2>
+          <p style={{ maxWidth: 420, color: '#e0e0e0', lineHeight: 1.5 }}>
+            Obtaining high-accuracy coordinates from your device hardware to dispatch the nearest emergency unit directly to your location.
+          </p>
         </div>
       )}
+
+      {gpsError && screen === 'dashboard' && (
+        <div style={{
+          background: '#fee2e2',
+          border: '1px solid #ef4444',
+          color: '#991b1b',
+          padding: '12px 20px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          fontWeight: 'bold',
+          fontSize: '0.9rem'
+        }}>
+          <div>⚠️ {gpsError}</div>
+          <button
+            onClick={() => requestGpsLocation()}
+            style={{
+              background: '#b91c1c',
+              color: 'white',
+              border: 'none',
+              padding: '6px 14px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '0.85rem'
+            }}
+          >
+            Retry GPS
+          </button>
+        </div>
+      )}
+
       {screen === 'dashboard' && (
         <Dashboard onEmergencySelect={handleEmergencySelect} />
       )}
+
       {screen === 'loading' && (
         <LoadingScreen emergencyType={selectedEmergency} />
       )}
+
       {screen === 'tracking' && emergencyData && (
         <TrackingScreen 
           data={emergencyData} 
@@ -151,14 +211,10 @@ function CitizenApp() {
   );
 }
 
-// Simple path-based split (no react-router needed): the ambulance crew
-// opens http://<host>:3000/ambulance?id=KA-19-EM-001 on their device,
-// citizens get the normal dashboard/tracking flow at "/".
-function App() {
-  if (window.location.pathname.startsWith('/ambulance')) {
+export default function Root() {
+  const isAmbulancePortal = window.location.pathname.includes('/ambulance') || window.location.search.includes('role=ambulance');
+  if (isAmbulancePortal) {
     return <AmbulanceApp />;
   }
   return <CitizenApp />;
 }
-
-export default App;

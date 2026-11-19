@@ -17,6 +17,26 @@ function MapRecenter({ center, enabled = false }) {
   return null;
 }
 
+function MapBoundsFitter({ patientLoc, ambulanceLoc, hospitalLoc, enabled = true }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!enabled) return;
+    const pts = [];
+    if (patientLoc?.lat && patientLoc?.lng) pts.push([patientLoc.lat, patientLoc.lng]);
+    if (ambulanceLoc?.lat && ambulanceLoc?.lng) pts.push([ambulanceLoc.lat, ambulanceLoc.lng]);
+    if (hospitalLoc?.lat && hospitalLoc?.lng) pts.push([hospitalLoc.lat, hospitalLoc.lng]);
+
+    if (pts.length >= 2) {
+      try {
+        map.fitBounds(pts, { padding: [60, 60], maxZoom: 15 });
+      } catch (e) {}
+    } else if (pts.length === 1) {
+      map.setView(pts[0], 14);
+    }
+  }, [map, patientLoc?.lat, patientLoc?.lng, ambulanceLoc?.lat, ambulanceLoc?.lng, hospitalLoc?.lat, hospitalLoc?.lng, enabled]);
+  return null;
+}
+
 // Fix for default marker icons in react-leaflet
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -225,7 +245,7 @@ function TrackingScreen({ data, onBack }) {
           setPatientGpsError('Patient GPS signal weak. Searching...');
         }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
@@ -490,7 +510,15 @@ function TrackingScreen({ data, onBack }) {
     if (ambulanceStatus.includes('Arrived at Hospital')) return 'Arrived';
     if (ambulanceStatus.includes('At Patient')) return 'At Patient';
     if (liveEta !== null && liveEta !== undefined) {
+      if (liveEta <= 1 && liveDistance > 1.0) {
+        return `${Math.max(2, Math.round((liveDistance / 35.0) * 60))} mins`;
+      }
       if (liveEta <= 1) return '< 1 min';
+      if (liveEta > 60) {
+        const hrs = Math.floor(liveEta / 60);
+        const mins = liveEta % 60;
+        return mins > 0 ? `~${hrs} hr ${mins} min` : `~${hrs} hr`;
+      }
       return `${liveEta} mins`;
     }
     return `${data.eta || 5} mins`;
@@ -499,7 +527,7 @@ function TrackingScreen({ data, onBack }) {
   const formatDistance = () => {
     if (liveDistance !== null && liveDistance !== undefined) {
       return liveDistance >= 1
-        ? `${liveDistance} km`
+        ? `${Number(liveDistance).toFixed(1)} km`
         : `${Math.round(liveDistance * 1000)} m`;
     }
     return `${data.distance || 'Calculating...'} km`;
@@ -619,6 +647,12 @@ function TrackingScreen({ data, onBack }) {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             />
             <MapRecenter center={[ambulanceLocation.lat, ambulanceLocation.lng]} enabled={autoFollow} />
+            <MapBoundsFitter 
+              patientLoc={patientLocation} 
+              ambulanceLoc={ambulanceLocation} 
+              hospitalLoc={data?.hospital?.location} 
+              enabled={!autoFollow} 
+            />
             
             <Marker position={[patientLocation.lat, patientLocation.lng]} icon={patientIcon}>
               <Popup>Patient Location</Popup>

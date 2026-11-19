@@ -70,14 +70,14 @@ function Routing({ start, end, onRouteInfo }) {
 }
 
 const FLEET_UNITS = [
-  { id: 'b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0', alias: 'Unit KA-B2D0', label: 'Mangalore Central' },
-  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0002', alias: 'Unit KA-A1C0', label: 'Mangalore Kadri' },
-  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0003', alias: 'Unit KA-A1C1', label: 'Mangalore Kankanady' },
-  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0004', alias: 'Unit KA-A1C2', label: 'Mangalore Deralakatte' },
+  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0007', alias: 'Unit KA-B1C0', label: 'Bhatkal Main Road' },
+  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0008', alias: 'Unit KA-B1C1', label: 'Bhatkal Coastal' },
+  { id: 'b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0', alias: 'Unit KA-B2D0', label: 'Bhatkal Emergency Unit' },
+  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0009', alias: 'Unit KA-B1C2', label: 'Bhatkal Taluk Hospital' },
   { id: 'h1c0d054-8d8a-42d6-b4fc-aecfb77f0005', alias: 'Unit KA-H1C0', label: 'Honnavar Port' },
   { id: 'h1c0d054-8d8a-42d6-b4fc-aecfb77f0006', alias: 'Unit KA-H1C1', label: 'Honnavar Taluk Center' },
-  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0007', alias: 'Unit KA-B1C0', label: 'Bhatkal Main Road' },
-  { id: 'b1c0d054-8d8a-42d6-b4fc-aecfb77f0008', alias: 'Unit KA-B1C1', label: 'Bhatkal Coastal' }
+  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0002', alias: 'Unit KA-A1C0', label: 'Mangalore Kadri' },
+  { id: 'a1c0d054-8d8a-42d6-b4fc-aecfb77f0003', alias: 'Unit KA-A1C1', label: 'Mangalore Kankanady' }
 ];
 
 const formatAmbulanceAlias = (uuid) => {
@@ -91,13 +91,15 @@ const formatAmbulanceAlias = (uuid) => {
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [ambulanceId, setAmbulanceId] = useState('b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0');
+  const [ambulanceId, setAmbulanceId] = useState('b1c0d054-8d8a-42d6-b4fc-aecfb77f0007');
   const [socket, setSocket] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, assigned, en_route_to_patient, en_route_to_hospital, arrived_at_hospital
   const [assignment, setAssignment] = useState(null);
   const [myLocation, setMyLocation] = useState(null);
   const [gpsPermissionError, setGpsPermissionError] = useState(null);
   const [routeInfo, setRouteInfo] = useState({ distanceKm: null, distanceMeters: null, etaMins: null, etaSeconds: null });
+
+  const isDebugMode = typeof window !== 'undefined' && window.location.search.includes('debug=true');
 
   // Direct device GPS acquisition (strictly real device coordinates, high accuracy, zero cache)
   const requestDeviceGps = useCallback(() => {
@@ -167,10 +169,16 @@ export default function App() {
           setGpsPermissionError('Location permission denied. GPS tracking unavailable.');
         }
       },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, [requestDeviceGps]);
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      requestDeviceGps();
+    }
+  }, [isLoggedIn, requestDeviceGps]);
 
   // Socket connection lifecycle
   useEffect(() => {
@@ -294,7 +302,7 @@ export default function App() {
     emergencyId: assignment?.emergency_id || assignment?.emergencyId,
     trackingToken: assignment?.tracking_token || assignment?.trackingToken,
     status,
-    enabled: status === 'en_route_to_patient' || status === 'en_route_to_hospital',
+    enabled: isLoggedIn,
     transmissionInterval: 2500,
     minDistanceMeters: 3.0,
     onLocationUpdate: ({ location }) => {
@@ -408,6 +416,9 @@ export default function App() {
   const formatDriverCountdown = () => {
     if (status === 'arrived_at_hospital') return 'Arrived';
     if (routeInfo.etaMins !== null && routeInfo.etaMins !== undefined) {
+      if (routeInfo.etaMins <= 1 && assignment?.distance > 1.0 && (routeInfo.distanceKm === null || routeInfo.distanceKm <= 0.2)) {
+        return `${assignment.eta || 5} mins`;
+      }
       if (routeInfo.etaMins <= 1) return '< 1 min';
       return `${routeInfo.etaMins} mins`;
     }
@@ -416,6 +427,9 @@ export default function App() {
 
   const formatDistance = () => {
     if (routeInfo.distanceKm !== null && routeInfo.distanceKm !== undefined) {
+      if (routeInfo.distanceKm <= 0.2 && assignment?.distance > 1.0) {
+        return `${assignment.distance} km`;
+      }
       return routeInfo.distanceKm >= 1
         ? `${routeInfo.distanceKm} km`
         : `${routeInfo.distanceMeters || Math.round(routeInfo.distanceKm * 1000)} m`;
@@ -567,13 +581,15 @@ export default function App() {
               </div>
 
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <button 
-                  onClick={stepTowardsTarget}
-                  title="Simulate driving 250m closer towards destination"
-                  style={{ padding: '14px 20px', fontSize: 15, background: '#f8fafc', color: '#1e293b', border: '1px solid #cbd5e1', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold' }}
-                >
-                  🚗 Test Move 250m
-                </button>
+                {isDebugMode && (
+                  <button 
+                    onClick={stepTowardsTarget}
+                    title="Simulate driving 250m closer towards destination (Debug Mode Only)"
+                    style={{ padding: '14px 20px', fontSize: 15, background: '#f8fafc', color: '#1e293b', border: '1px solid #cbd5e1', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold' }}
+                  >
+                    🚗 Test Move 250m
+                  </button>
+                )}
                 {status === 'en_route_to_patient' ? (
                   <button 
                     onClick={() => updateStatus('en_route_to_hospital')}
@@ -685,7 +701,7 @@ export default function App() {
               >
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <Routing 
-                  start={status === 'en_route_to_patient' ? (myLocation || assignment.patient_location) : assignment.patient_location} 
+                  start={status === 'en_route_to_patient' ? (myLocation || assignment.ambulance_location || assignment.ambulance?.location || assignment.patient_location) : (myLocation || assignment.patient_location)} 
                   end={status === 'en_route_to_patient' ? assignment.patient_location : assignment.hospital.location} 
                   onRouteInfo={setRouteInfo}
                 />

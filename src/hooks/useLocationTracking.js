@@ -90,18 +90,13 @@ export function useLocationTracking({
       return;
     }
 
-    if (!emergencyId) {
-      console.warn('Cannot start location tracking without an active emergencyId assignment.');
-      return;
-    }
-
     stopWatch(); // Clear any existing watcher to avoid duplicates
     setErrorMessage(null);
     setTrackingStatus('starting');
     setIsTracking(true);
 
-    // Notify backend and join trip room
-    if (socket && socket.connected) {
+    // Notify backend and join trip room if emergencyId is available
+    if (socket && socket.connected && emergencyId) {
       const tripId = `trip_${emergencyId.replace('trip_', '')}`;
       socket.emit('join_trip', { tripId });
       socket.emit('tracking:start', {
@@ -117,9 +112,9 @@ export function useLocationTracking({
     }
 
     const geoOptions = {
-      enableHighAccuracy,
+      enableHighAccuracy: true,
       maximumAge: 0,
-      timeout: 10000
+      timeout: 15000
     };
 
     const handleSuccess = (position) => {
@@ -180,12 +175,12 @@ export function useLocationTracking({
         (elapsedSinceLastSend >= transmissionInterval && distanceMoved >= minDistanceMeters) ||
         (elapsedSinceLastSend >= 5000);
 
-      if (shouldTransmit && socket && socket.connected && emergencyId) {
+      if (shouldTransmit && socket && socket.connected) {
         lastSendTimeRef.current = now;
         lastTransmittedLocRef.current = locObj;
         setLastTransmitted({ ...locObj, timestamp: isoTs });
 
-        const tripId = `trip_${emergencyId.replace('trip_', '')}`;
+        const tripId = emergencyId ? `trip_${emergencyId.replace('trip_', '')}` : undefined;
         const payload = {
           tripId,
           trip_id: tripId,
@@ -209,6 +204,25 @@ export function useLocationTracking({
 
         socket.emit('update_location', payload);
         socket.emit('ambulance:location:update', payload);
+
+        // Also update backend fleet REST endpoint directly to guarantee backend memory stays synced
+        const API_BASE_URL = typeof window !== 'undefined' && (
+          window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://aro-backend-tvkq.onrender.com'
+        );
+        if (ambulanceId) {
+          fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/location`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ambulance_id: ambulanceId,
+              lat: latitude,
+              lng: longitude,
+              speed: parsedSpeedKmh || 0,
+              heading: parsedHeading || 0,
+              accuracy: parsedAccuracy
+            })
+          }).catch(() => {});
+        }
       }
     };
 
@@ -265,13 +279,21 @@ export function useLocationTracking({
     emergencyId,
     trackingToken,
     status,
-    enableHighAccuracy,
     transmissionInterval,
     minDistanceMeters,
     onLocationUpdate,
     onError,
     stopWatch
   ]);
+
+  // Auto-start tracking when enabled
+  useEffect(() => {
+    if (enabled) {
+      startTracking();
+    } else {
+      stopTracking('disabled');
+    }
+  }, [enabled, startTracking, stopTracking]);
 
   // Clean up on component unmount
   useEffect(() => {

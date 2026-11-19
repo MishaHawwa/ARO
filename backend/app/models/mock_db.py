@@ -1,72 +1,72 @@
 hospitals = [
     {
         "id": 1,
-        "name": "CityCare Hospital",
-        "location": {"lat": 12.9716, "lng": 77.5946},
+        "name": "Bhatkal Government Hospital (Taluk Hospital)",
+        "location": {"lat": 13.9818, "lng": 74.5492},
         "cardiac_icu": True,
         "neuro_icu": True,
         "trauma_center": True,
         "burn_unit": True,
         "maternity_ward": True,
-        "beds_available": 15,
+        "beds_available": 60,
         "specialists": ["cardiologist", "neurologist", "trauma", "burn", "obstetrician"]
     },
     {
         "id": 2,
-        "name": "MediPlus Hospital",
-        "location": {"lat": 12.9352, "lng": 77.6245},
+        "name": "Lifecare Hospital Bhatkal",
+        "location": {"lat": 13.9645, "lng": 74.5645},
         "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 25,
+        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician"]
+    },
+    {
+        "id": 3,
+        "name": "Honnavar Taluk Government Hospital",
+        "location": {"lat": 14.2806, "lng": 74.4452},
+        "cardiac_icu": False,
         "neuro_icu": False,
         "trauma_center": True,
         "burn_unit": False,
         "maternity_ward": True,
-        "beds_available": 8,
-        "specialists": ["cardiologist", "trauma", "obstetrician"]
-    },
-    {
-        "id": 3,
-        "name": "LifeLine Medical Center",
-        "location": {"lat": 12.9141, "lng": 77.6411},
-        "cardiac_icu": False,
-        "neuro_icu": True,
-        "trauma_center": True,
-        "burn_unit": True,
-        "maternity_ward": False,
-        "beds_available": 12,
-        "specialists": ["neurologist", "trauma", "burn"]
+        "beds_available": 50,
+        "specialists": ["trauma", "general_physician", "obstetrician"]
     },
     {
         "id": 4,
-        "name": "Apollo Emergency Care",
-        "location": {"lat": 13.0358, "lng": 77.5970},
+        "name": "St. Ignatius Hospital Honnavar",
+        "location": {"lat": 14.2769, "lng": 74.4531},
         "cardiac_icu": True,
         "neuro_icu": True,
         "trauma_center": True,
-        "burn_unit": True,
+        "burn_unit": False,
         "maternity_ward": True,
-        "beds_available": 20,
+        "beds_available": 65,
         "specialists": ["cardiologist", "neurologist", "trauma", "burn", "obstetrician"]
     },
     {
         "id": 5,
-        "name": "QuickCare Hospital",
-        "location": {"lat": 12.8956, "lng": 77.6362},
-        "cardiac_icu": False,
+        "name": "Lifeline Hospital & Trauma Care Honnavar",
+        "location": {"lat": 14.2795, "lng": 74.4480},
+        "cardiac_icu": True,
         "neuro_icu": False,
         "trauma_center": True,
         "burn_unit": False,
-        "maternity_ward": True,
-        "beds_available": 5,
-        "specialists": ["trauma", "obstetrician"]
+        "maternity_ward": False,
+        "beds_available": 30,
+        "specialists": ["cardiologist", "trauma", "obstetrician"]
     }
 ]
 
 ambulances = [
-    {"id": "KA-01-EM-101", "location": {"lat": 12.9716, "lng": 77.5946}, "available": True},
-    {"id": "KA-01-EM-102", "location": {"lat": 12.9352, "lng": 77.6245}, "available": True},
-    {"id": "KA-01-EM-103", "location": {"lat": 12.9141, "lng": 77.6411}, "available": True},
-    {"id": "KA-01-EM-104", "location": {"lat": 13.0358, "lng": 77.5970}, "available": True},
-    {"id": "KA-01-EM-105", "location": {"lat": 12.8956, "lng": 77.6362}, "available": True}
+    {"id": "KA-01-EM-101", "location": {"lat": 13.9780, "lng": 74.5520}, "available": True},
+    {"id": "KA-01-EM-102", "location": {"lat": 13.9660, "lng": 74.5670}, "available": True},
+    {"id": "KA-01-EM-103", "location": {"lat": 13.9800, "lng": 74.5510}, "available": True},
+    {"id": "KA-01-EM-104", "location": {"lat": 14.2770, "lng": 74.4530}, "available": True},
+    {"id": "KA-01-EM-105", "location": {"lat": 14.2810, "lng": 74.4450}, "available": True}
 ]
 
 emergency_requirements = {

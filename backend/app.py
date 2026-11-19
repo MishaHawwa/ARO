@@ -125,52 +125,16 @@ HEADERS = {"x-api-key": BACKENLY_API_KEY}
 
 DEFAULT_HOSPITALS = [
     {
-        "id": "kmc-mangalore",
-        "name": "KMC Hospital Mangalore (Ambedkar Circle)",
-        "location": {"lat": 12.8718, "lng": 74.8425},
+        "id": "bhatkal-govt-hospital",
+        "name": "Bhatkal Government Hospital (Taluk Hospital)",
+        "location": {"lat": 13.9818, "lng": 74.5492},
         "cardiac_icu": True,
         "neuro_icu": True,
         "trauma_center": True,
         "burn_unit": True,
-        "maternity_ward": True,
-        "beds_available": 45,
-        "specialists": ["cardiologist", "neurologist", "trauma", "pediatrician", "general_physician", "burn", "obstetrician"]
-    },
-    {
-        "id": "fathermuller-mangalore",
-        "name": "Father Muller Medical College Hospital (Kankanady)",
-        "location": {"lat": 12.8631, "lng": 74.8622},
-        "cardiac_icu": True,
-        "neuro_icu": True,
-        "trauma_center": True,
-        "burn_unit": False,
         "maternity_ward": True,
         "beds_available": 60,
-        "specialists": ["cardiologist", "neurologist", "trauma", "obstetrician", "general_physician"]
-    },
-    {
-        "id": "aj-mangalore",
-        "name": "A.J. Hospital & Research Centre (Kuntikan)",
-        "location": {"lat": 12.9056, "lng": 74.8542},
-        "cardiac_icu": True,
-        "neuro_icu": True,
-        "trauma_center": True,
-        "burn_unit": False,
-        "maternity_ward": True,
-        "beds_available": 35,
-        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician"]
-    },
-    {
-        "id": "wenlock-mangalore",
-        "name": "Wenlock District Hospital (Hampankatta)",
-        "location": {"lat": 12.8672, "lng": 74.8436},
-        "cardiac_icu": False,
-        "neuro_icu": False,
-        "trauma_center": True,
-        "burn_unit": True,
-        "maternity_ward": True,
-        "beds_available": 80,
-        "specialists": ["trauma", "pediatrician", "burn", "general_physician", "obstetrician"]
+        "specialists": ["cardiologist", "neurologist", "trauma", "pediatrician", "general_physician", "burn", "obstetrician"]
     },
     {
         "id": "3a95708c-35e6-4d34-adc6-18583d160268",
@@ -231,14 +195,107 @@ DEFAULT_HOSPITALS = [
         "maternity_ward": True,
         "beds_available": 20,
         "specialists": ["general_physician", "obstetrician"]
+    },
+    {
+        "id": "kmc-mangalore",
+        "name": "KMC Hospital Mangalore (Ambedkar Circle)",
+        "location": {"lat": 12.8718, "lng": 74.8425},
+        "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": True,
+        "maternity_ward": True,
+        "beds_available": 45,
+        "specialists": ["cardiologist", "neurologist", "trauma", "pediatrician", "general_physician", "burn", "obstetrician"]
+    },
+    {
+        "id": "fathermuller-mangalore",
+        "name": "Father Muller Medical College Hospital (Kankanady)",
+        "location": {"lat": 12.8631, "lng": 74.8622},
+        "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 60,
+        "specialists": ["cardiologist", "neurologist", "trauma", "obstetrician", "general_physician"]
+    },
+    {
+        "id": "aj-mangalore",
+        "name": "A.J. Hospital & Research Centre (Kuntikan)",
+        "location": {"lat": 12.9056, "lng": 74.8542},
+        "cardiac_icu": True,
+        "neuro_icu": True,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "beds_available": 35,
+        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician"]
+    },
+    {
+        "id": "wenlock-mangalore",
+        "name": "Wenlock District Hospital (Hampankatta)",
+        "location": {"lat": 12.8672, "lng": 74.8436},
+        "cardiac_icu": False,
+        "neuro_icu": False,
+        "trauma_center": True,
+        "burn_unit": True,
+        "maternity_ward": True,
+        "beds_available": 80,
+        "specialists": ["trauma", "pediatrician", "burn", "general_physician", "obstetrician"]
     }
 ]
 
 DEFAULT_AMBULANCES = [
     {
+        "id": "b1c0d054-8d8a-42d6-b4fc-aecfb77f0007",
+        "name": "Unit KA-B1C0 (Bhatkal Main Road)",
+        "location": {"lat": 13.9780, "lng": 74.5520},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "b1c0d054-8d8a-42d6-b4fc-aecfb77f0008",
+        "name": "Unit KA-B1C1 (Bhatkal Coastal)",
+        "location": {"lat": 13.9660, "lng": 74.5670},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
         "id": "b2d0b054-8d8a-42d6-b4fc-aecfb77f36d0",
-        "name": "Unit KA-B2D0 (Mangalore Central)",
-        "location": {"lat": 12.8725, "lng": 74.8440},
+        "name": "Unit KA-B2D0 (Bhatkal Emergency Unit)",
+        "location": {"lat": 13.9800, "lng": 74.5510},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "b1c0d054-8d8a-42d6-b4fc-aecfb77f0009",
+        "name": "Unit KA-B1C2 (Bhatkal Taluk Hospital)",
+        "location": {"lat": 13.9820, "lng": 74.5490},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "h1c0d054-8d8a-42d6-b4fc-aecfb77f0005",
+        "name": "Unit KA-H1C0 (Honnavar Port)",
+        "location": {"lat": 14.2770, "lng": 74.4530},
+        "available": True,
+        "phone": "+919110853440",
+        "driver_status": "idle",
+        "current_emergency_id": None
+    },
+    {
+        "id": "h1c0d054-8d8a-42d6-b4fc-aecfb77f0006",
+        "name": "Unit KA-H1C1 (Honnavar Taluk Center)",
+        "location": {"lat": 14.2810, "lng": 74.4450},
         "available": True,
         "phone": "+919110853440",
         "driver_status": "idle",
@@ -266,42 +323,6 @@ DEFAULT_AMBULANCES = [
         "id": "a1c0d054-8d8a-42d6-b4fc-aecfb77f0004",
         "name": "Unit KA-A1C2 (Mangalore Deralakatte)",
         "location": {"lat": 12.8120, "lng": 74.8980},
-        "available": True,
-        "phone": "+919110853440",
-        "driver_status": "idle",
-        "current_emergency_id": None
-    },
-    {
-        "id": "h1c0d054-8d8a-42d6-b4fc-aecfb77f0005",
-        "name": "Unit KA-H1C0 (Honnavar Port)",
-        "location": {"lat": 14.2770, "lng": 74.4530},
-        "available": True,
-        "phone": "+919110853440",
-        "driver_status": "idle",
-        "current_emergency_id": None
-    },
-    {
-        "id": "h1c0d054-8d8a-42d6-b4fc-aecfb77f0006",
-        "name": "Unit KA-H1C1 (Honnavar Taluk Center)",
-        "location": {"lat": 14.2810, "lng": 74.4450},
-        "available": True,
-        "phone": "+919110853440",
-        "driver_status": "idle",
-        "current_emergency_id": None
-    },
-    {
-        "id": "b1c0d054-8d8a-42d6-b4fc-aecfb77f0007",
-        "name": "Unit KA-B1C0 (Bhatkal Main Road)",
-        "location": {"lat": 13.9780, "lng": 74.5520},
-        "available": True,
-        "phone": "+919110853440",
-        "driver_status": "idle",
-        "current_emergency_id": None
-    },
-    {
-        "id": "b1c0d054-8d8a-42d6-b4fc-aecfb77f0008",
-        "name": "Unit KA-B1C1 (Bhatkal Coastal)",
-        "location": {"lat": 13.9660, "lng": 74.5670},
         "available": True,
         "phone": "+919110853440",
         "driver_status": "idle",
@@ -400,7 +421,12 @@ def fetch_ambulances(force_refresh=False):
             lat = a.get("location_lat")
             lng = a.get("location_lng")
             if lat is None or lng is None:
-                lat, lng = 12.8725, 74.8440
+                # Fallback to matching default ambulance or Bhatkal center
+                def_match = next((d for d in DEFAULT_AMBULANCES if d['id'] == a.get('id')), None)
+                if def_match and 'location' in def_match:
+                    lat, lng = def_match['location']['lat'], def_match['location']['lng']
+                else:
+                    lat, lng = 13.9780, 74.5520
             formatted_ambulances.append({
                 "id": a.get("id"),
                 "name": a.get("name") or f"Unit {str(a.get('id', ''))[:8]}",
@@ -986,7 +1012,11 @@ def handle_emergency():
     ambulances = fetch_ambulances()
     for a in ambulances:
         if not a.get('location') or not isinstance(a['location'], dict):
-            a['location'] = {'lat': 12.8725, 'lng': 74.8440}
+            def_match = next((d for d in DEFAULT_AMBULANCES if d['id'] == a.get('id')), None)
+            if def_match and 'location' in def_match:
+                a['location'] = def_match['location'].copy()
+            else:
+                a['location'] = {'lat': 13.9780, 'lng': 74.5520}
 
     available_ambulances = [a for a in ambulances if a.get('available', True)]
     if not available_ambulances:
@@ -1641,7 +1671,29 @@ def handle_join_trip(data):
         amb_id = active.get('ambulance_id')
         amb = next((a for a in fetch_ambulances() if a['id'] == amb_id), None)
         tracking_info = active.get('tracking', {})
-        latest_loc = tracking_info.get('latest_location') or (amb and amb.get('location')) or active.get('ambulance_location') or {'lat': 12.8725, 'lng': 74.8440}
+        latest_loc = (
+            tracking_info.get('latest_location')
+            or (amb and amb.get('location'))
+            or active.get('ambulance_location')
+            or active.get('patient_location')
+            or {'lat': 13.9780, 'lng': 74.5520}
+        )
+
+        target = active.get('hospital_location') if active.get('phase') == 'to_hospital' else active.get('patient_location')
+        if (active.get('distance_km') is None or active.get('distance_km') == 0) and latest_loc and target and 'lat' in latest_loc and 'lng' in latest_loc and 'lat' in target and 'lng' in target:
+            crow_km = calculate_distance(latest_loc, target)
+            road_km = round(max(0.05, crow_km * 1.25), 2)
+            road_m = int(round(road_km * 1000.0))
+            calc_eta_m = max(1, int(round((road_km / 35.0) * 60.0)))
+            active['distance_km'] = road_km
+            active['remaining_distance_meters'] = road_m
+            active['eta'] = calc_eta_m
+            active['remaining_eta_seconds'] = calc_eta_m * 60
+
+        dist_km = active.get('distance_km', 2.0)
+        dist_m = active.get('remaining_distance_meters', int(dist_km * 1000))
+        eta_m = active.get('eta', 5)
+        eta_s = active.get('remaining_eta_seconds', eta_m * 60)
 
         snapshot = {
             'tripId': trip_room,
@@ -1665,9 +1717,13 @@ def handle_join_trip(data):
             'hospitalLocation': active.get('hospital_location'),
             'status': active.get('status', 'Ambulance Dispatched'),
             'phase': active.get('phase', 'to_patient'),
-            'eta': active.get('eta', 5),
-            'distanceKm': active.get('distance_km', 2.0),
-            'distance_km': active.get('distance_km', 2.0),
+            'eta': eta_m,
+            'eta_seconds': eta_s,
+            'etaSeconds': eta_s,
+            'distanceKm': dist_km,
+            'distance_km': dist_km,
+            'distance_meters': dist_m,
+            'distanceMeters': dist_m,
             'trackingStatus': tracking_info.get('status', 'waiting'),
             'timestamp': tracking_info.get('last_update_iso') or get_utc_iso()
         }
@@ -1798,8 +1854,30 @@ def handle_tracking_subscribe(data):
     amb_id = active.get('ambulance_id')
     amb = next((a for a in fetch_ambulances() if a['id'] == amb_id), None)
     tracking_info = active.get('tracking', {})
-    latest_loc = tracking_info.get('latest_location') or (amb and amb.get('location')) or active.get('ambulance_location') or {'lat': 12.8725, 'lng': 74.8440}
+    latest_loc = (
+        tracking_info.get('latest_location')
+        or (amb and amb.get('location'))
+        or active.get('ambulance_location')
+        or active.get('patient_location')
+        or {'lat': 13.9780, 'lng': 74.5520}
+    )
     tracking_status = tracking_info.get('status', 'waiting')
+
+    target = active.get('hospital_location') if active.get('phase') == 'to_hospital' else active.get('patient_location')
+    if (active.get('distance_km') is None or active.get('distance_km') == 0) and latest_loc and target and 'lat' in latest_loc and 'lng' in latest_loc and 'lat' in target and 'lng' in target:
+        crow_km = calculate_distance(latest_loc, target)
+        road_km = round(max(0.05, crow_km * 1.25), 2)
+        road_m = int(round(road_km * 1000.0))
+        calc_eta_m = max(1, int(round((road_km / 35.0) * 60.0)))
+        active['distance_km'] = road_km
+        active['remaining_distance_meters'] = road_m
+        active['eta'] = calc_eta_m
+        active['remaining_eta_seconds'] = calc_eta_m * 60
+
+    dist_km = active.get('distance_km', 2.0)
+    dist_m = active.get('remaining_distance_meters', int(dist_km * 1000))
+    eta_m = active.get('eta', 5)
+    eta_s = active.get('remaining_eta_seconds', eta_m * 60)
 
     snapshot = {
         'emergencyId': emergency_id,
@@ -1812,11 +1890,19 @@ def handle_tracking_subscribe(data):
         'accuracy': latest_loc.get('accuracy') if isinstance(latest_loc, dict) else None,
         'heading': latest_loc.get('heading') if isinstance(latest_loc, dict) else None,
         'speed': latest_loc.get('speed') if isinstance(latest_loc, dict) else None,
+        'patient_location': active.get('patient_location'),
+        'patientLocation': active.get('patient_location'),
+        'hospital_location': active.get('hospital_location'),
+        'hospitalLocation': active.get('hospital_location'),
         'status': active.get('status', 'Ambulance Dispatched'),
         'phase': active.get('phase', 'to_patient'),
-        'eta': active.get('eta', 5),
-        'distanceKm': active.get('distance_km', 2.0),
-        'distance_km': active.get('distance_km', 2.0),
+        'eta': eta_m,
+        'eta_seconds': eta_s,
+        'etaSeconds': eta_s,
+        'distanceKm': dist_km,
+        'distance_km': dist_km,
+        'distance_meters': dist_m,
+        'distanceMeters': dist_m,
         'trackingStatus': tracking_status,
         'tracking_status': tracking_status,
         'timestamp': tracking_info.get('last_update_iso') or get_utc_iso(),
@@ -2095,7 +2181,8 @@ def ambulance_respond(ambulance_id):
                 a['available'] = True
             available_ambulances = [a for a in ambulances if a['id'] != ambulance_id] or ambulances
             
-        patient_location = data.get('patient_location', {'lat': 12.8725, 'lng': 74.8440})
+        active = ACTIVE_EMERGENCIES.get(emergency_id)
+        patient_location = data.get('patient_location') or (active and active.get('patient_location')) or {'lat': 13.9780, 'lng': 74.5520}
         
         nearest_ambulance = min(
             available_ambulances,
