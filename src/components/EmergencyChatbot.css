@@ -90,6 +90,75 @@
   color: #999;
 }
 
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 14px;
+}
+
+.typing-indicator .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #3a86ff;
+  animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.typing-indicator .dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-indicator .dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes typingBounce {
+  0%, 80%, 100% {
+    transform: scale(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.chatbot-quick-chips {
+  display: flex;
+  overflow-x: auto;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #f1f5f9;
+  border-top: 1px solid #e2e8f0;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.chatbot-chip {
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.chatbot-chip:hover:not(:disabled) {
+  background: #3a86ff;
+  color: white;
+  border-color: #3a86ff;
+}
+
+.chatbot-chip:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .chatbot-input-row {
   display: flex;
   align-items: center;

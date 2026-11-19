@@ -188,6 +188,13 @@ function TrackingScreen({ data, onBack }) {
   const [telemetry, setTelemetry] = useState({ accuracy: null, speed: null, heading: null, timestamp: null });
   const [secondsSinceLastUpdate, setSecondsSinceLastUpdate] = useState(0);
   const [activeAmbulance, setActiveAmbulance] = useState(data.ambulance || {});
+  const [assignedHospitalData, setAssignedHospitalData] = useState(data.hospital || {});
+  const [erPreparedInfo, setErPreparedInfo] = useState({
+    prepared: Boolean(data.er_acknowledged),
+    bay: data.er_bay || null,
+    notes: data.er_notes || null
+  });
+  const [isAdmitted, setIsAdmitted] = useState(false);
   const [reroutedNotice, setReroutedNotice] = useState(null);
   const [autoFollow, setAutoFollow] = useState(false);
   const ambulanceMarkerRef = React.useRef(null);
@@ -477,6 +484,36 @@ function TrackingScreen({ data, onBack }) {
       setLiveDistance(0.0);
     });
 
+    socket.on('er_acknowledged', (payload) => {
+      if (!payload.emergency_id || payload.emergency_id === data.emergency_id) {
+        setErPreparedInfo({
+          prepared: true,
+          bay: payload.er_bay || 'Bay 1',
+          notes: payload.notes || 'Intake team prepared.'
+        });
+      }
+    });
+
+    socket.on('patient_admitted', (payload) => {
+      if (!payload.emergency_id || payload.emergency_id === data.emergency_id) {
+        setIsAdmitted(true);
+        setAmbulanceStatus('Admitted to Hospital');
+        setJourneyPhase('admitted');
+        setTrackingState('stopped');
+        setLiveEta(0);
+        setLiveDistance(0.0);
+      }
+      if (payload.hospital && (payload.hospital.id === data.hospital?.id || payload.hospital_id === data.hospital?.id)) {
+        setAssignedHospitalData(prev => ({ ...prev, ...payload.hospital }));
+      }
+    });
+
+    socket.on('hospital_resources_updated', (payload) => {
+      if (payload.hospital && (payload.hospital_id === data.hospital?.id || payload.hospital.id === data.hospital?.id)) {
+        setAssignedHospitalData(prev => ({ ...prev, ...payload.hospital }));
+      }
+    });
+
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       socket.off('connect');
@@ -488,6 +525,9 @@ function TrackingScreen({ data, onBack }) {
       socket.off('tracking:started');
       socket.off('tracking:stopped');
       socket.off('ambulance_arrived');
+      socket.off('er_acknowledged');
+      socket.off('patient_admitted');
+      socket.off('hospital_resources_updated');
       socket.disconnect();
     };
   }, [data, initialAmbulanceLoc, activeAmbulance.id]);
@@ -576,6 +616,33 @@ function TrackingScreen({ data, onBack }) {
           <div style={{ background: '#fee2e2', border: '1px solid #f87171', color: '#991b1b', padding: '12px 20px', borderRadius: '12px', marginBottom: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span>⚠️</span>
             <span>{patientGpsError}</span>
+          </div>
+        )}
+
+        {/* Patient Admitted Banner */}
+        {isAdmitted && (
+          <div style={{ background: '#dcfce7', border: '1px solid #86efac', color: '#166534', padding: '16px 22px', borderRadius: '12px', marginBottom: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '1.8rem' }}>🏥</span>
+              <div>
+                <div style={{ fontSize: '1.1rem' }}>Patient Successfully Admitted!</div>
+                <div style={{ fontSize: '0.85rem', color: '#14532d', fontWeight: 500 }}>The emergency trip has concluded at {assignedHospitalData.name || data.hospital.name}.</div>
+              </div>
+            </div>
+            <button onClick={onBack} style={{ padding: '8px 16px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
+              Return to Dashboard
+            </button>
+          </div>
+        )}
+
+        {/* ER Prepared Notification Banner */}
+        {erPreparedInfo.prepared && !isAdmitted && (
+          <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46', padding: '12px 20px', borderRadius: '12px', marginBottom: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '1.4rem' }}>✅</span>
+            <div>
+              <div>ER Intake Bay Prepared: <strong>{erPreparedInfo.bay || 'Trauma Bay 1'}</strong></div>
+              {erPreparedInfo.notes && <div style={{ fontSize: '0.82rem', color: '#047857', fontWeight: 500 }}>{erPreparedInfo.notes}</div>}
+            </div>
           </div>
         )}
 
@@ -737,10 +804,10 @@ function TrackingScreen({ data, onBack }) {
             </div>
           </div>
           <div className="detail-card">
-            <div className="detail-icon">✅</div>
+            <div className="detail-icon">{erPreparedInfo.prepared ? '✅' : '⏳'}</div>
             <div className="detail-content">
               <div className="detail-label">Hospital Prepared</div>
-              <div className="detail-value">YES</div>
+              <div className="detail-value">{erPreparedInfo.prepared ? `Prepared (${erPreparedInfo.bay || 'Bay 1'})` : 'Standing By'}</div>
             </div>
           </div>
           <div className="detail-card">
@@ -748,6 +815,79 @@ function TrackingScreen({ data, onBack }) {
             <div className="detail-content">
               <div className="detail-label">{journeyPhase === 'to_hospital' ? 'Distance to Hospital' : 'Distance Remaining'}</div>
               <div className="detail-value">{liveDistance} km</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Destination Hospital Live Telemetry & Specialist Roster */}
+        <div style={{ background: 'white', borderRadius: '16px', padding: '20px 24px', border: '1px solid #e2e8f0', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+            <div>
+              <div style={{ fontSize: '0.78rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Destination Hospital Telemetry</div>
+              <h3 style={{ margin: '2px 0 0 0', fontSize: '1.25rem', color: '#1e293b' }}>{assignedHospitalData.name || data.hospital.name}</h3>
+            </div>
+            <span style={{ background: '#dcfce7', color: '#166534', padding: '4px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+              ● Live Bed & Specialist Sync
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+            <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Total Beds</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#1e40af', marginTop: '2px' }}>
+                {assignedHospitalData.beds_available ?? ((assignedHospitalData.icu_beds || 0) + (assignedHospitalData.general_beds || 0))}
+              </div>
+            </div>
+            <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>ICU Beds</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#065f46', marginTop: '2px' }}>
+                {assignedHospitalData.icu_beds ?? '—'}
+              </div>
+            </div>
+            <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>General Beds</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#1e293b', marginTop: '2px' }}>
+                {assignedHospitalData.general_beds ?? '—'}
+              </div>
+            </div>
+            <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Ventilators</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#d97706', marginTop: '2px' }}>
+                {assignedHospitalData.ventilators ?? '—'}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold', marginBottom: '8px', textTransform: 'uppercase' }}>
+              On-Duty Medical Specialists:
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {(assignedHospitalData.specialists || []).map((s, idx) => {
+                const name = typeof s === 'object' ? s.name : `Dr. ${String(s).toUpperCase()}`;
+                const spec = typeof s === 'object' ? s.specialty : s;
+                const status = typeof s === 'object' ? s.status : 'Available';
+                if (status === 'Off-Duty') return null;
+                return (
+                  <span 
+                    key={s.id || idx}
+                    style={{ 
+                      background: status === 'Available' ? '#eff6ff' : '#fef9c3', 
+                      color: status === 'Available' ? '#1e40af' : '#854d0e',
+                      border: `1px solid ${status === 'Available' ? '#bfdbfe' : '#fde68a'}`,
+                      borderRadius: '8px', 
+                      padding: '5px 10px', 
+                      fontSize: '0.82rem', 
+                      fontWeight: 600,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    👨‍⚕️ {name} <span style={{ opacity: 0.75, fontSize: '0.75rem' }}>({spec})</span>
+                  </span>
+                );
+              })}
             </div>
           </div>
         </div>

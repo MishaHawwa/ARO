@@ -95,6 +95,7 @@ export default function App() {
   const [socket, setSocket] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, assigned, en_route_to_patient, en_route_to_hospital, arrived_at_hospital
   const [assignment, setAssignment] = useState(null);
+  const [erBayNotice, setErBayNotice] = useState(null);
   const [myLocation, setMyLocation] = useState(null);
   const [gpsPermissionError, setGpsPermissionError] = useState(null);
   const [routeInfo, setRouteInfo] = useState({ distanceKm: null, distanceMeters: null, etaMins: null, etaSeconds: null });
@@ -281,6 +282,38 @@ export default function App() {
             distanceMeters: update.distance_meters ?? update.distanceMeters ?? prev.distanceMeters
           }));
         }
+      });
+
+      newSocket.on('er_acknowledged', (data) => {
+        setErBayNotice({
+          prepared: true,
+          bay: data.er_bay || 'Bay 1',
+          notes: data.notes || 'Intake trauma team standing by'
+        });
+      });
+
+      newSocket.on('hospital_resources_updated', (data) => {
+        if (data.hospital) {
+          setAssignment(prev => {
+            if (!prev || !prev.hospital) return prev;
+            if (String(prev.hospital.id) === String(data.hospital.id) || String(prev.hospital.id) === String(data.hospital_id)) {
+              return {
+                ...prev,
+                hospital: { ...prev.hospital, ...data.hospital }
+              };
+            }
+            return prev;
+          });
+        }
+      });
+
+      newSocket.on('patient_admitted', (data) => {
+        setStatus('arrived_at_hospital');
+        setErBayNotice(null);
+        setTimeout(() => {
+          setAssignment(null);
+          setStatus('idle');
+        }, 4000);
       });
       
       return () => newSocket.close();
@@ -606,6 +639,63 @@ export default function App() {
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* ER Bay Prepared Alert */}
+            {erBayNotice && erBayNotice.prepared && (
+              <div style={{ background: '#ecfdf5', border: '1px solid #86efac', color: '#166534', padding: '16px 22px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 4px 14px rgba(22, 163, 74, 0.12)', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <span style={{ fontSize: '1.8rem' }}>🏥</span>
+                  <div>
+                    <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>ER Intake Prepared: {erBayNotice.bay}</div>
+                    <div style={{ fontSize: '0.85rem', color: '#14532d', marginTop: '2px' }}>{erBayNotice.notes || 'Emergency room team standing by for arrival.'}</div>
+                  </div>
+                </div>
+                <span style={{ background: '#16a34a', color: 'white', padding: '4px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>Ready</span>
+              </div>
+            )}
+
+            {/* Zero Beds Diversion Warning */}
+            {assignment.hospital && (assignment.hospital.beds_available === 0 || (assignment.hospital.icu_beds === 0 && assignment.hospital.general_beds === 0)) && (
+              <div style={{ background: '#fee2e2', border: '1px solid #ef4444', color: '#991b1b', padding: '14px 20px', borderRadius: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)' }}>
+                <span style={{ fontSize: '1.6rem' }}>⚠️</span>
+                <div>
+                  <div style={{ fontSize: '1rem' }}>DIVERSION ALERT: 0 Available Beds at {assignment.hospital.name}!</div>
+                  <div style={{ fontSize: '0.82rem', color: '#7f1d1d', fontWeight: 500, marginTop: '2px' }}>Destination hospital has reported full capacity. Contact ER dispatch or prepare for secondary rerouting.</div>
+                </div>
+              </div>
+            )}
+
+            {/* Destination Hospital Capacity & Named Specialist Roster Card */}
+            <div style={{ background: 'white', padding: '18px 24px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <div>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Destination Hospital Profile</span>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#1e293b' }}>{assignment.hospital?.name}</div>
+                </div>
+                <div style={{ fontSize: '0.82rem', background: '#f1f5f9', color: '#475569', padding: '6px 12px', borderRadius: '8px', fontWeight: 'bold' }}>
+                  Available Beds: <strong style={{ color: '#16a34a' }}>{assignment.hospital?.beds_available ?? ((assignment.hospital?.icu_beds || 0) + (assignment.hospital?.general_beds || 0))}</strong> (ICU: {assignment.hospital?.icu_beds ?? '—'}, Gen: {assignment.hospital?.general_beds ?? '—'}, Vents: {assignment.hospital?.ventilators ?? '—'})
+                </div>
+              </div>
+
+              {assignment.hospital?.specialists && assignment.hospital.specialists.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>On-Duty Specialists:</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {assignment.hospital.specialists.map((s, idx) => {
+                      const name = typeof s === 'object' ? s.name : `Dr. ${String(s).toUpperCase()}`;
+                      const spec = typeof s === 'object' ? s.specialty : s;
+                      const status = typeof s === 'object' ? s.status : 'Available';
+                      if (status === 'Off-Duty') return null;
+                      return (
+                        <span key={s.id || idx} style={{ background: '#f8fafc', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '6px', fontSize: '0.78rem', color: '#334155' }}>
+                          👨‍⚕️ <strong>{name}</strong> ({spec})
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Live GPS Tracking Control & Hardware Telemetry Banner */}

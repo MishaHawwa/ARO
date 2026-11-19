@@ -128,121 +128,165 @@ DEFAULT_HOSPITALS = [
         "id": "bhatkal-govt-hospital",
         "name": "Bhatkal Government Hospital (Taluk Hospital)",
         "location": {"lat": 13.9818, "lng": 74.5492},
+        "icu_beds": 12,
+        "general_beds": 48,
+        "ventilators": 8,
+        "beds_available": 60,
         "cardiac_icu": True,
         "neuro_icu": True,
         "trauma_center": True,
         "burn_unit": True,
         "maternity_ward": True,
-        "beds_available": 60,
-        "specialists": ["cardiologist", "neurologist", "trauma", "pediatrician", "general_physician", "burn", "obstetrician"]
+        "status": "Accepting Patients",
+        "specialists": [
+            {"id": "spec-bgh-1", "name": "Dr. Rajesh Naik", "specialty": "Cardiologist", "status": "Available"},
+            {"id": "spec-bgh-2", "name": "Dr. Ayesha Khan", "specialty": "Neurologist", "status": "Available"},
+            {"id": "spec-bgh-3", "name": "Dr. Mohammed Faizan", "specialty": "Trauma Surgeon", "status": "Available"},
+            {"id": "spec-bgh-4", "name": "Dr. Sneha Hegde", "specialty": "Pediatrician", "status": "Available"},
+            {"id": "spec-bgh-5", "name": "Dr. Farooq Batin", "specialty": "Emergency Physician", "status": "Available"},
+            {"id": "spec-bgh-6", "name": "Dr. Kavita Rao", "specialty": "Obstetrician", "status": "Available"}
+        ]
     },
     {
         "id": "3a95708c-35e6-4d34-adc6-18583d160268",
         "name": "Lifecare Hospital Bhatkal",
         "location": {"lat": 13.9645, "lng": 74.5645},
+        "icu_beds": 6,
+        "general_beds": 19,
+        "ventilators": 4,
+        "beds_available": 25,
         "cardiac_icu": True,
         "neuro_icu": True,
         "trauma_center": True,
         "burn_unit": False,
         "maternity_ward": True,
-        "beds_available": 25,
-        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician"]
+        "status": "Accepting Patients",
+        "specialists": [
+            {"id": "spec-lch-1", "name": "Dr. Imran Shabandri", "specialty": "Emergency Physician", "status": "Available"},
+            {"id": "spec-lch-2", "name": "Dr. Preeti Kamath", "specialty": "Cardiologist", "status": "Available"},
+            {"id": "spec-lch-3", "name": "Dr. Abdul Qadir", "specialty": "Trauma Surgeon", "status": "Busy"},
+            {"id": "spec-lch-4", "name": "Dr. Sarah D'Souza", "specialty": "Neurologist", "status": "Available"}
+        ]
+    },
+    {
+        "id": "welfare-hospital-bhatkal",
+        "name": "Welfare Hospital Bhatkal",
+        "location": {"lat": 13.9740, "lng": 74.5560},
+        "icu_beds": 5,
+        "general_beds": 25,
+        "ventilators": 3,
+        "beds_available": 30,
+        "cardiac_icu": False,
+        "neuro_icu": False,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "status": "Accepting Patients",
+        "specialists": [
+            {"id": "spec-whb-1", "name": "Dr. Zameer Ahmed", "specialty": "General Physician", "status": "Available"},
+            {"id": "spec-whb-2", "name": "Dr. Fatima Bi", "specialty": "Obstetrician", "status": "Available"},
+            {"id": "spec-whb-3", "name": "Dr. Naveen Prabhu", "specialty": "Trauma Surgeon", "status": "Available"}
+        ]
+    },
+    {
+        "id": "rns-hospital-murdeshwar",
+        "name": "RNS Hospital Murdeshwar",
+        "location": {"lat": 14.0930, "lng": 74.4890},
+        "icu_beds": 10,
+        "general_beds": 35,
+        "ventilators": 6,
+        "beds_available": 45,
+        "cardiac_icu": True,
+        "neuro_icu": False,
+        "trauma_center": True,
+        "burn_unit": False,
+        "maternity_ward": True,
+        "status": "Accepting Patients",
+        "specialists": [
+            {"id": "spec-rns-1", "name": "Dr. Suresh Bhat", "specialty": "Cardiologist", "status": "Available"},
+            {"id": "spec-rns-2", "name": "Dr. Ananya Shenoy", "specialty": "Emergency Physician", "status": "Available"},
+            {"id": "spec-rns-3", "name": "Dr. Vinod Pai", "specialty": "Trauma Surgeon", "status": "Available"}
+        ]
     },
     {
         "id": "st-ignatius-honnavar",
         "name": "St. Ignatius Hospital Honnavar",
         "location": {"lat": 14.2769, "lng": 74.4531},
+        "icu_beds": 15,
+        "general_beds": 50,
+        "ventilators": 10,
+        "beds_available": 65,
         "cardiac_icu": True,
         "neuro_icu": True,
         "trauma_center": True,
         "burn_unit": False,
         "maternity_ward": True,
-        "beds_available": 65,
-        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician", "obstetrician"]
+        "status": "Accepting Patients",
+        "specialists": [
+            {"id": "spec-sih-1", "name": "Dr. Lawrence D'Souza", "specialty": "Cardiologist", "status": "Available"},
+            {"id": "spec-sih-2", "name": "Dr. Maria Fernandes", "specialty": "Neurologist", "status": "Available"},
+            {"id": "spec-sih-3", "name": "Dr. Nitin Kumar", "specialty": "Trauma Surgeon", "status": "Available"},
+            {"id": "spec-sih-4", "name": "Dr. Anita George", "specialty": "Obstetrician", "status": "Available"}
+        ]
     },
     {
         "id": "honnavar-taluk-govt",
         "name": "Honnavar Taluk Government Hospital",
         "location": {"lat": 14.2806, "lng": 74.4452},
-        "cardiac_icu": False,
-        "neuro_icu": False,
-        "trauma_center": True,
-        "burn_unit": False,
-        "maternity_ward": True,
+        "icu_beds": 8,
+        "general_beds": 42,
+        "ventilators": 5,
         "beds_available": 50,
-        "specialists": ["trauma", "general_physician", "obstetrician"]
-    },
-    {
-        "id": "lifeline-honnavar",
-        "name": "Lifeline Hospital & Trauma Care Honnavar",
-        "location": {"lat": 14.2795, "lng": 74.4480},
-        "cardiac_icu": True,
+        "cardiac_icu": False,
         "neuro_icu": False,
         "trauma_center": True,
         "burn_unit": False,
-        "maternity_ward": False,
-        "beds_available": 30,
-        "specialists": ["cardiologist", "trauma", "general_physician"]
-    },
-    {
-        "id": "durgamba-honnavar",
-        "name": "Shree Durgamba Hospital Honnavar",
-        "location": {"lat": 14.2818, "lng": 74.4439},
-        "cardiac_icu": False,
-        "neuro_icu": False,
-        "trauma_center": False,
-        "burn_unit": False,
         "maternity_ward": True,
-        "beds_available": 20,
-        "specialists": ["general_physician", "obstetrician"]
+        "status": "Accepting Patients",
+        "specialists": [
+            {"id": "spec-htg-1", "name": "Dr. Manjunath Gouda", "specialty": "Emergency Physician", "status": "Available"},
+            {"id": "spec-htg-2", "name": "Dr. Radhika Nayak", "specialty": "Pediatrician", "status": "Available"},
+            {"id": "spec-htg-3", "name": "Dr. Ashok Patil", "specialty": "Trauma Surgeon", "status": "Available"}
+        ]
     },
     {
         "id": "kmc-mangalore",
         "name": "KMC Hospital Mangalore (Ambedkar Circle)",
         "location": {"lat": 12.8718, "lng": 74.8425},
+        "icu_beds": 15,
+        "general_beds": 30,
+        "ventilators": 10,
+        "beds_available": 45,
         "cardiac_icu": True,
         "neuro_icu": True,
         "trauma_center": True,
         "burn_unit": True,
         "maternity_ward": True,
-        "beds_available": 45,
-        "specialists": ["cardiologist", "neurologist", "trauma", "pediatrician", "general_physician", "burn", "obstetrician"]
-    },
-    {
-        "id": "fathermuller-mangalore",
-        "name": "Father Muller Medical College Hospital (Kankanady)",
-        "location": {"lat": 12.8631, "lng": 74.8622},
-        "cardiac_icu": True,
-        "neuro_icu": True,
-        "trauma_center": True,
-        "burn_unit": False,
-        "maternity_ward": True,
-        "beds_available": 60,
-        "specialists": ["cardiologist", "neurologist", "trauma", "obstetrician", "general_physician"]
-    },
-    {
-        "id": "aj-mangalore",
-        "name": "A.J. Hospital & Research Centre (Kuntikan)",
-        "location": {"lat": 12.9056, "lng": 74.8542},
-        "cardiac_icu": True,
-        "neuro_icu": True,
-        "trauma_center": True,
-        "burn_unit": False,
-        "maternity_ward": True,
-        "beds_available": 35,
-        "specialists": ["cardiologist", "neurologist", "trauma", "general_physician"]
+        "status": "Accepting Patients",
+        "specialists": [
+            {"id": "spec-kmc-1", "name": "Dr. Harish Rao", "specialty": "Cardiologist", "status": "Available"},
+            {"id": "spec-kmc-2", "name": "Dr. Meenakshi Sundaram", "specialty": "Neurologist", "status": "Available"},
+            {"id": "spec-kmc-3", "name": "Dr. Shridhar Acharya", "specialty": "Trauma Surgeon", "status": "Available"}
+        ]
     },
     {
         "id": "wenlock-mangalore",
         "name": "Wenlock District Hospital (Hampankatta)",
         "location": {"lat": 12.8672, "lng": 74.8436},
+        "icu_beds": 20,
+        "general_beds": 60,
+        "ventilators": 12,
+        "beds_available": 80,
         "cardiac_icu": False,
         "neuro_icu": False,
         "trauma_center": True,
         "burn_unit": True,
         "maternity_ward": True,
-        "beds_available": 80,
-        "specialists": ["trauma", "pediatrician", "burn", "general_physician", "obstetrician"]
+        "status": "Accepting Patients",
+        "specialists": [
+            {"id": "spec-wen-1", "name": "Dr. Pradeep Kumar", "specialty": "Trauma Surgeon", "status": "Available"},
+            {"id": "spec-wen-2", "name": "Dr. Sunita Shetty", "specialty": "Burn Specialist", "status": "Available"}
+        ]
     }
 ]
 
@@ -381,10 +425,28 @@ def fetch_hospitals(force_refresh=False):
                 "beds_available": h.get("beds_available", 0),
                 "specialists": specs
             })
-    result = formatted_hospitals if formatted_hospitals else DEFAULT_HOSPITALS
-    _hospitals_cache["data"] = result
+    # Merge Backenly records with rich DEFAULT_HOSPITALS data
+    merged_hospitals = [h.copy() for h in DEFAULT_HOSPITALS]
+    if formatted_hospitals:
+        for fh in formatted_hospitals:
+            match = next((h for h in merged_hospitals if str(h['id']) == str(fh['id'])), None)
+            if match:
+                if fh.get('location'): match['location'] = fh['location']
+                if fh.get('beds_available') is not None and fh.get('beds_available') > 0:
+                    match['beds_available'] = fh['beds_available']
+            else:
+                fh['icu_beds'] = fh.get('icu_beds', max(2, int(fh.get('beds_available', 10) * 0.2)))
+                fh['general_beds'] = fh.get('general_beds', max(5, int(fh.get('beds_available', 10) * 0.8)))
+                fh['ventilators'] = fh.get('ventilators', max(1, int(fh['icu_beds'] * 0.5)))
+                fh['status'] = 'Accepting Patients'
+                fh['specialists'] = [
+                    {'id': f"spec-{fh['id']}-1", 'name': 'Dr. On Duty', 'specialty': 'Emergency Physician', 'status': 'Available'}
+                ]
+                merged_hospitals.append(fh)
+
+    _hospitals_cache["data"] = merged_hospitals
     _hospitals_cache["time"] = now
-    return result
+    return merged_hospitals
 
 _ambulances_cache = {"data": None, "time": 0}
 ACTIVE_EMERGENCIES = {}
@@ -888,6 +950,22 @@ def calculate_distance(loc1, loc2):
     """Calculate distance between two coordinates in km"""
     return geodesic((loc1['lat'], loc1['lng']), (loc2['lat'], loc2['lng'])).km
 
+def check_hospital_specialist(hospital, target_spec):
+    if not target_spec:
+        return False
+    target = target_spec.lower().replace('_', '').replace(' ', '')
+    for s in hospital.get('specialists', []):
+        if isinstance(s, dict):
+            spec_name = s.get('specialty', '').lower().replace('_', '').replace(' ', '')
+            if target in spec_name or spec_name in target:
+                if s.get('status') != 'Off-Duty':
+                    return True
+        elif isinstance(s, str):
+            s_clean = s.lower().replace('_', '').replace(' ', '')
+            if target in s_clean or s_clean in target:
+                return True
+    return False
+
 def score_hospital_breakdown(hospital, emergency_type, patient_location):
     """
     Full scoring breakdown for one hospital against one emergency.
@@ -907,13 +985,13 @@ def score_hospital_breakdown(hospital, emergency_type, patient_location):
     has_required_facility = hospital.get(required_facility, False)
 
     required_specialist = requirements.get('required_specialist')
-    has_required_specialist = required_specialist in hospital.get('specialists', [])
+    has_required_specialist = check_hospital_specialist(hospital, required_specialist)
 
     fallback_facility = requirements.get('fallback_facility')
     fallback_specialist = requirements.get('fallback_specialist')
 
     has_fallback_facility = hospital.get(fallback_facility, False) if fallback_facility else False
-    has_fallback_specialist = fallback_specialist in hospital.get('specialists', []) if fallback_specialist else False
+    has_fallback_specialist = check_hospital_specialist(hospital, fallback_specialist) if fallback_specialist else False
 
     distance = calculate_distance(patient_location, hospital['location'])
 
@@ -1185,6 +1263,188 @@ def verify_hospital_passcode():
 @app.route('/api/hospitals', methods=['GET'])
 def get_hospitals():
     return jsonify(fetch_hospitals())
+
+@app.route('/api/hospitals/<hospital_id>/resources', methods=['PATCH', 'POST'])
+def update_hospital_resources(hospital_id):
+    data = request.json or {}
+    hospitals = fetch_hospitals()
+    target = next((h for h in hospitals if str(h.get('id')) == str(hospital_id)), None)
+    if not target:
+        target = next((h for h in DEFAULT_HOSPITALS if str(h.get('id')) == str(hospital_id)), None)
+        if target:
+            hospitals.append(target)
+            
+    if not target:
+        return jsonify({'error': f'Hospital {hospital_id} not found'}), 404
+
+    if 'icu_beds' in data:
+        target['icu_beds'] = max(0, int(data['icu_beds']))
+    if 'general_beds' in data:
+        target['general_beds'] = max(0, int(data['general_beds']))
+    if 'ventilators' in data:
+        target['ventilators'] = max(0, int(data['ventilators']))
+    
+    if 'beds_available' in data and 'icu_beds' not in data and 'general_beds' not in data:
+        target['beds_available'] = max(0, int(data['beds_available']))
+    else:
+        target['beds_available'] = target.get('icu_beds', 0) + target.get('general_beds', 0)
+
+    if 'status' in data:
+        target['status'] = str(data['status'])
+        
+    if 'specialists' in data and isinstance(data['specialists'], list):
+        clean_specs = []
+        for i, s in enumerate(data['specialists']):
+            if isinstance(s, dict):
+                clean_specs.append({
+                    'id': str(s.get('id') or f"spec-{hospital_id}-{i+1}"),
+                    'name': str(s.get('name') or 'Dr. Specialist'),
+                    'specialty': str(s.get('specialty') or 'Emergency Physician'),
+                    'status': str(s.get('status') or 'Available')
+                })
+            elif isinstance(s, str):
+                clean_specs.append({
+                    'id': f"spec-{hospital_id}-{i+1}",
+                    'name': f"Dr. {s.capitalize()}",
+                    'specialty': s.capitalize(),
+                    'status': 'Available'
+                })
+        target['specialists'] = clean_specs
+
+    # Persist in DEFAULT_HOSPITALS so refreshes preserve values
+    for dh in DEFAULT_HOSPITALS:
+        if str(dh.get('id')) == str(hospital_id):
+            dh.update({
+                'icu_beds': target.get('icu_beds', dh.get('icu_beds', 0)),
+                'general_beds': target.get('general_beds', dh.get('general_beds', 0)),
+                'ventilators': target.get('ventilators', dh.get('ventilators', 0)),
+                'beds_available': target['beds_available'],
+                'status': target.get('status', 'Accepting Patients'),
+                'specialists': target.get('specialists', dh.get('specialists', []))
+            })
+
+    socketio.emit('hospital_resources_updated', {
+        'hospital_id': hospital_id,
+        'hospital': target,
+        'hospitals': fetch_hospitals()
+    })
+    socketio.emit('hospital_update', target)
+
+    return jsonify({'ok': True, 'hospital': target})
+
+@app.route('/api/hospital/acknowledge-emergency', methods=['POST'])
+def hospital_acknowledge_emergency():
+    data = request.json or {}
+    emergency_id = data.get('emergency_id') or data.get('emergencyId')
+    hospital_id = data.get('hospital_id') or data.get('hospitalId')
+    er_bay = data.get('er_bay') or data.get('bay') or 'Bay 1 (Trauma)'
+    notes = data.get('notes') or 'ER Bay and trauma team prepped for patient intake.'
+
+    if not emergency_id:
+        return jsonify({'error': 'emergency_id is required'}), 400
+
+    payload = {
+        'emergency_id': emergency_id,
+        'hospital_id': hospital_id,
+        'er_acknowledged': True,
+        'er_bay': er_bay,
+        'notes': notes,
+        'timestamp': datetime.utcnow().isoformat()
+    }
+
+    if emergency_id in ACTIVE_EMERGENCIES:
+        emg = ACTIVE_EMERGENCIES[emergency_id]
+        emg['er_acknowledged'] = True
+        emg['er_bay'] = er_bay
+        emg['er_notes'] = notes
+        emg['er_acknowledged_at'] = payload['timestamp']
+
+    socketio.emit('er_acknowledged', payload, room=f"trip_{emergency_id}")
+    socketio.emit('er_acknowledged', payload)
+    if hospital_id:
+        socketio.emit('er_acknowledged', payload, room=f"hospital:{hospital_id}")
+
+    return jsonify({'ok': True, 'acknowledged': True, 'data': payload})
+
+@app.route('/api/hospital/admit-patient', methods=['POST'])
+def hospital_admit_patient():
+    data = request.json or {}
+    emergency_id = data.get('emergency_id') or data.get('emergencyId')
+    hospital_id = data.get('hospital_id') or data.get('hospitalId')
+    bed_type = data.get('bed_type', 'general').lower()
+
+    if not emergency_id:
+        return jsonify({'error': 'emergency_id is required'}), 400
+
+    hospitals = fetch_hospitals()
+    target_hospital = None
+    if hospital_id:
+        target_hospital = next((h for h in hospitals if str(h.get('id')) == str(hospital_id)), None)
+
+    if not target_hospital and emergency_id in ACTIVE_EMERGENCIES:
+        emg_hosp = ACTIVE_EMERGENCIES[emergency_id].get('hospital', {})
+        target_hospital = next((h for h in hospitals if str(h.get('id')) == str(emg_hosp.get('id'))), None)
+
+    if target_hospital:
+        if bed_type == 'icu':
+            target_hospital['icu_beds'] = max(0, target_hospital.get('icu_beds', 1) - 1)
+        else:
+            target_hospital['general_beds'] = max(0, target_hospital.get('general_beds', 1) - 1)
+        
+        target_hospital['beds_available'] = target_hospital.get('icu_beds', 0) + target_hospital.get('general_beds', 0)
+
+        for dh in DEFAULT_HOSPITALS:
+            if str(dh.get('id')) == str(target_hospital.get('id')):
+                dh['icu_beds'] = target_hospital.get('icu_beds', dh.get('icu_beds', 0))
+                dh['general_beds'] = target_hospital.get('general_beds', dh.get('general_beds', 0))
+                dh['beds_available'] = target_hospital['beds_available']
+
+    ambulance_id = None
+    if emergency_id in ACTIVE_EMERGENCIES:
+        emg = ACTIVE_EMERGENCIES[emergency_id]
+        emg['status'] = 'admitted'
+        emg['journey_phase'] = 'admitted'
+        ambulance_id = emg.get('ambulance_id') or emg.get('assigned_ambulance', {}).get('id')
+    
+    if ambulance_id:
+        for a in fetch_ambulances():
+            if str(a.get('id')) == str(ambulance_id):
+                a['available'] = True
+                a['driver_status'] = 'idle'
+                a['current_emergency_id'] = None
+        for a in DEFAULT_AMBULANCES:
+            if str(a.get('id')) == str(ambulance_id):
+                a['available'] = True
+                a['driver_status'] = 'idle'
+                a['current_emergency_id'] = None
+        update_ambulance_status(ambulance_id, {
+            'available': True,
+            'driver_status': 'idle',
+            'current_emergency_id': None
+        })
+
+    admit_payload = {
+        'emergency_id': emergency_id,
+        'hospital_id': hospital_id or (target_hospital['id'] if target_hospital else None),
+        'hospital': target_hospital,
+        'bed_type': bed_type,
+        'ambulance_id': ambulance_id,
+        'status': 'admitted',
+        'timestamp': datetime.utcnow().isoformat()
+    }
+
+    socketio.emit('patient_admitted', admit_payload, room=f"trip_{emergency_id}")
+    socketio.emit('patient_admitted', admit_payload)
+    socketio.emit('ambulance_arrived', {'emergency_id': emergency_id})
+    if target_hospital:
+        socketio.emit('hospital_resources_updated', {
+            'hospital_id': target_hospital['id'],
+            'hospital': target_hospital,
+            'hospitals': fetch_hospitals()
+        })
+        socketio.emit('hospital_update', target_hospital)
+
+    return jsonify({'ok': True, 'admitted': True, 'data': admit_payload})
 
 @app.route('/api/ambulances', methods=['GET'])
 def get_ambulances():
@@ -2132,6 +2392,26 @@ def handle_join_hospital(data):
         join_room(f"hospital_{hospital_id}")
         emit('joined', {'hospital_id': hospital_id})
 
+@socketio.on('hospital_resource_update')
+def handle_socket_hospital_resource_update(data):
+    if not isinstance(data, dict): return
+    h_id = data.get('hospital_id') or data.get('hospitalId')
+    if h_id:
+        with app.test_request_context(json=data):
+            update_hospital_resources(h_id)
+
+@socketio.on('er_prepare_bay')
+def handle_socket_er_prepare_bay(data):
+    if not isinstance(data, dict): return
+    with app.test_request_context(json=data):
+        hospital_acknowledge_emergency()
+
+@socketio.on('admit_patient')
+def handle_socket_admit_patient(data):
+    if not isinstance(data, dict): return
+    with app.test_request_context(json=data):
+        hospital_admit_patient()
+
 @app.route('/api/ambulance/<ambulance_id>/respond', methods=['POST'])
 def ambulance_respond(ambulance_id):
     data = request.json or {}
@@ -2317,64 +2597,123 @@ def generate_offline_chat_response(user_message, emergency_type):
     
     return f"Please stay calm. Keep the patient in a comfortable position, monitor breathing, and wait for the emergency team."
 
-try:
-    import google.generativeai as genai
-    gemini_key = os.environ.get('GEMINI_API_KEY')
-    if gemini_key:
-        genai.configure(api_key=gemini_key)
-        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-    else:
-        gemini_model = None
-except Exception as e:
-    gemini_model = None
+gemini_client = None
+gemini_sdk_type = None
+
+gemini_key = os.environ.get('GEMINI_API_KEY')
+if gemini_key:
+    try:
+        from google import genai
+        gemini_client = genai.Client(api_key=gemini_key)
+        gemini_sdk_type = 'genai'
+        print("[AI] Initialized Gemini 2.5 Flash via google.genai")
+    except Exception as e1:
+        try:
+            import google.generativeai as legacy_genai
+            legacy_genai.configure(api_key=gemini_key)
+            gemini_client = legacy_genai.GenerativeModel('gemini-2.5-flash')
+            gemini_sdk_type = 'legacy'
+            print("[AI] Initialized Gemini 2.5 Flash via legacy google.generativeai")
+        except Exception as e2:
+            print(f"[AI] Failed to initialize Gemini model: {e2}")
+            gemini_client = None
 
 
 @app.route('/api/chat', methods=['POST'])
 def emergency_chat():
     data = request.json or {}
     user_message = data.get('message', '').strip()
-    emergency_type = data.get('emergency_type', 'the emergency')
+    messages_input = data.get('messages') or data.get('history', [])
+    emergency_type = data.get('emergency_type', 'Medical Emergency')
     severity = data.get('severity', 'Unknown')
     eta = data.get('eta')
-    history = data.get('history', [])  # [{role: 'user'|'assistant', content: str}, ...]
+
+    # If message is not directly in 'message', check the last user message in messages array
+    if not user_message and messages_input:
+        for m in reversed(messages_input):
+            if m.get('role') in ['user', 'human']:
+                user_message = (m.get('content') or m.get('text') or '').strip()
+                break
 
     if not user_message:
         return jsonify({'error': 'message is required'}), 400
 
-    if gemini_model is None:
-        # Use intelligent offline first-aid guidance engine when API key is not set
-        reply_text = generate_offline_chat_response(user_message, emergency_type)
-        return jsonify({'reply': reply_text})
-
-    system_prompt = (
-        f"You are an emergency first-aid voice assistant embedded in an "
-        f"ambulance-dispatch app. The active emergency is: {emergency_type} "
-        f"(severity: {severity}), ambulance ETA: {eta} minutes. "
-        f"The user is a bystander or patient, likely stressed, possibly "
-        f"speaking via voice-to-text, and will probably have this answer "
-        f"read aloud via text-to-speech. Rules: keep every answer under "
-        f"60 words, use short plain sentences, no markdown, no headers, "
-        f"give the single most important action first. If the situation "
-        f"sounds life-threatening or worsening, tell them to call local "
-        f"emergency services immediately in addition to anything else. "
-        f"Never claim to be a doctor or give a diagnosis - give first-aid "
-        f"guidance only."
+    system_instruction = (
+        "You are an Emergency Medical Triage & First-Aid Assistant for the Ambulance Route Optimization app. "
+        "Your mission is to provide calm, reassuring, highly actionable first-aid steps while the user waits for the ambulance. "
+        f"The current emergency is: {emergency_type} (severity: {severity})"
+        f"{f', ambulance ETA is {eta} minutes' if eta else ''}. "
+        "Guidelines:\n"
+        "1. Identify emergency severity and red-flag symptoms.\n"
+        "2. Provide calm, immediate, step-by-step first-aid actions (e.g. CPR posture, clearing airway, pressure on bleeding, recovery position).\n"
+        "3. If critical life-threatening symptoms arise or worsen, explicitly remind the user to trigger SOS or call 108 / local emergency services immediately.\n"
+        "4. Strictly NEVER diagnose illnesses and NEVER prescribe or suggest taking specific prescription drugs or medication.\n"
+        "5. Keep responses concise, direct, and under 60-80 words so they can be digested quickly in an emergency or read aloud via speech synthesis.\n"
+        "6. Do NOT use markdown headers, bold asterisks (**), or bullet lists that sound awkward when read aloud."
     )
 
-    prompt = f"System Context:\n{system_prompt}\n\nConversation History:\n"
-    for msg in history[-6:]:
-        role = "Assistant" if msg['role'] == 'assistant' else "User"
-        prompt += f"{role}: {msg['content']}\n"
-    prompt += f"User: {user_message}\nAssistant:"
+    if gemini_client is None:
+        reply_text = generate_offline_chat_response(user_message, emergency_type)
+        return jsonify({
+            'reply': reply_text,
+            'source': 'offline_triage_engine',
+            'model': 'first-aid-rules'
+        })
 
     try:
-        response = gemini_model.generate_content(prompt)
-        reply_text = response.text.replace('*', '').strip() # Remove any markdown stars
-    except Exception as e:
-        print(f"[Chat] Gemini API error: {e}")
-        reply_text = generate_offline_chat_response(user_message, emergency_type)
+        reply_text = None
+        if gemini_sdk_type == 'genai':
+            contents = []
+            # Append up to last 6 history messages
+            for m in messages_input[-6:]:
+                role = 'user' if m.get('role') in ['user', 'human'] else 'model'
+                text = (m.get('content') or m.get('text') or '').strip()
+                if text and text != user_message:
+                    contents.append({'role': role, 'parts': [{'text': text}]})
+            contents.append({'role': 'user', 'parts': [{'text': user_message}]})
 
-    return jsonify({'reply': reply_text})
+            resp = gemini_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=contents,
+                config={
+                    'system_instruction': system_instruction,
+                    'temperature': 0.3,
+                    'max_output_tokens': 200
+                }
+            )
+            if resp and resp.text:
+                reply_text = resp.text.replace('*', '').replace('#', '').strip()
+
+        elif gemini_sdk_type == 'legacy':
+            history_prompt = f"System Instruction:\n{system_instruction}\n\nRecent Conversation:\n"
+            for m in messages_input[-6:]:
+                role = "Assistant" if m.get('role') in ['assistant', 'model'] else "User"
+                text = (m.get('content') or m.get('text') or '').strip()
+                if text and text != user_message:
+                    history_prompt += f"{role}: {text}\n"
+            history_prompt += f"User: {user_message}\nAssistant:"
+
+            resp = gemini_client.generate_content(history_prompt)
+            if resp and resp.text:
+                reply_text = resp.text.replace('*', '').replace('#', '').strip()
+
+        if not reply_text:
+            reply_text = generate_offline_chat_response(user_message, emergency_type)
+
+        return jsonify({
+            'reply': reply_text,
+            'source': 'gemini_api',
+            'model': 'gemini-2.5-flash'
+        })
+
+    except Exception as e:
+        print(f"[Chat] Gemini 2.5 Flash API error: {e}")
+        reply_text = generate_offline_chat_response(user_message, emergency_type)
+        return jsonify({
+            'reply': reply_text,
+            'source': 'offline_fallback',
+            'model': 'first-aid-rules'
+        })
 
 
 if __name__ == '__main__':

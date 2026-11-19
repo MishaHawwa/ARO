@@ -3,6 +3,7 @@ import Dashboard from './components/Dashboard';
 import LoadingScreen from './components/LoadingScreen';
 import TrackingScreen from './components/TrackingScreen';
 import AmbulanceApp from './components/AmbulanceApp';
+import EmergencyChatbot from './components/EmergencyChatbot';
 import './App.css';
 
 function CitizenApp() {
@@ -194,7 +195,10 @@ function CitizenApp() {
       )}
 
       {screen === 'dashboard' && (
-        <Dashboard onEmergencySelect={handleEmergencySelect} />
+        <>
+          <Dashboard onEmergencySelect={handleEmergencySelect} />
+          <EmergencyChatbot emergencyType="Medical Triage & First-Aid" severity="Normal" />
+        </>
       )}
 
       {screen === 'loading' && (
