@@ -296,48 +296,44 @@ export function useLocationTracking({
         const curTripId = curEmgId ? `trip_${curEmgId.replace('trip_', '')}` : undefined;
 
         if (curSocket && curSocket.connected) {
-          const payload = {
-            tripId: curTripId,
-            trip_id: curTripId,
-            role: 'driver',
-            lat: latitude,
-            lng: longitude,
-            latitude,
-            longitude,
-            ambulanceId: curAmbId,
-            ambulance_id: curAmbId,
-            emergencyId: curEmgId,
-            emergency_id: curEmgId,
-            trackingToken: curToken,
-            location: locObj,
-            accuracy: parsedAccuracy,
-            heading: effectiveHeading,
-            speed: parsedSpeedKmh,
-            timestamp: isoTs,
-            status: curStatus
-          };
-
           curSocket.emit('update_location', payload);
           curSocket.emit('ambulance:location:update', payload);
+        }
 
-          // Fallback REST ping to guarantee in-memory fleet freshness
-          const API_BASE_URL = typeof window !== 'undefined' && (
-            window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://aro-backend-tvkq.onrender.com'
-          );
-          if (curAmbId) {
+        // Direct REST call to immediately overwrite seeded backend coordinates with live GPS
+        const API_BASE_URL = typeof window !== 'undefined' && (
+          window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://aro-backend-tvkq.onrender.com'
+        );
+        if (curAmbId && API_BASE_URL) {
+          fetch(`${API_BASE_URL}/api/ambulances/${curAmbId}/location`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ambulance_id: curAmbId,
+              emergency_id: curEmgId,
+              lat: latitude,
+              lng: longitude,
+              speed: parsedSpeedKmh,
+              heading: effectiveHeading,
+              accuracy: parsedAccuracy,
+              status: curStatus
+            })
+          }).catch(() => {
             fetch(`${API_BASE_URL}/api/ambulance/${curAmbId}/location`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 ambulance_id: curAmbId,
+                emergency_id: curEmgId,
                 lat: latitude,
                 lng: longitude,
                 speed: parsedSpeedKmh,
                 heading: effectiveHeading,
-                accuracy: parsedAccuracy
+                accuracy: parsedAccuracy,
+                status: curStatus
               })
             }).catch(() => {});
-          }
+          });
         }
       }
     };
@@ -368,6 +364,15 @@ export function useLocationTracking({
       setTrackingStatus(newStatus);
       if (onErrorRef.current) onErrorRef.current(friendlyMsg);
     };
+
+    // Immediate one-shot fix for instant 0ms latency lock on real device hardware
+    try {
+      navigator.geolocation.getCurrentPosition(
+        handleSuccess,
+        handleError,
+        geoOptions
+      );
+    } catch (e) {}
 
     try {
       watchIdRef.current = navigator.geolocation.watchPosition(

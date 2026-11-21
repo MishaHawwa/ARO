@@ -123,12 +123,17 @@ function Routing({ start, end, onRouteInfo }) {
     }).addTo(map);
 
     control.on('routesfound', (e) => {
-      if (e.routes && e.routes[0] && e.routes[0].summary) {
-        const s = e.routes[0].summary;
+      if (e.routes && e.routes[0]) {
+        const route = e.routes[0];
+        const s = route.summary || {};
+        const coordinates = (route.coordinates || []).map(c => [c.lat, c.lng]);
         if (onRouteInfo) {
           onRouteInfo({
             distanceKm: Number((s.totalDistance / 1000).toFixed(1)),
-            etaMins: Math.max(1, Math.round(s.totalTime / 60))
+            distanceMeters: Math.round(s.totalDistance),
+            etaMins: Math.max(1, Math.round(s.totalTime / 60)),
+            etaSeconds: Math.round(s.totalTime),
+            routeGeometry: coordinates
           });
         }
       }
@@ -316,7 +321,73 @@ export default function App() {
   const [routeInfo, setRouteInfo] = useState({ distanceKm: null, distanceMeters: null, etaMins: null, etaSeconds: null });
 
   const mapInstanceRef = useRef(null);
+  const latestRouteGeometryRef = useRef(null);
   const isDebugMode = typeof window !== 'undefined' && window.location.search.includes('debug=true');
+
+  // Immediate hardware GPS acquisition to eliminate seeded coordinates
+  const acquireHardwareGps = useCallback(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const loc = { lat, lng };
+        setMyLocation(loc);
+        console.log('[Ambulance App] Live hardware GPS locked:', loc);
+
+        if (socket && socket.connected) {
+          const payload = {
+            ambulanceId,
+            ambulance_id: ambulanceId,
+            emergencyId: assignment?.emergency_id || assignment?.emergencyId,
+            emergency_id: assignment?.emergency_id || assignment?.emergencyId,
+            latitude: lat,
+            longitude: lng,
+            location: loc,
+            accuracy: pos.coords.accuracy,
+            speed: pos.coords.speed || 0,
+            heading: pos.coords.heading || 0,
+            timestamp: new Date().toISOString(),
+            status,
+            route_geometry: latestRouteGeometryRef.current
+          };
+          socket.emit('update_location', payload);
+          socket.emit('ambulance:location:update', payload);
+        }
+
+        // Direct REST update to immediately overwrite seeded backend Anjumanabad coordinates
+        fetch(`${API_BASE_URL}/api/ambulances/${ambulanceId}/location`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ambulance_id: ambulanceId,
+            emergency_id: assignment?.emergency_id,
+            lat,
+            lng,
+            accuracy: pos.coords.accuracy,
+            timestamp: new Date().toISOString()
+          })
+        }).catch(() => {
+          fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/location`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ambulance_id: ambulanceId,
+              emergency_id: assignment?.emergency_id,
+              lat,
+              lng,
+              accuracy: pos.coords.accuracy,
+              timestamp: new Date().toISOString()
+            })
+          }).catch(() => {});
+        });
+      },
+      (err) => {
+        console.warn('[Ambulance App] Hardware GPS fix warning:', err.message);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  }, [ambulanceId, socket, assignment?.emergency_id, status]);
 
   // Unified Location Tracking Hook
   const {
@@ -341,6 +412,19 @@ export default function App() {
       setMyLocation(location);
     }
   });
+
+  // Acquire hardware GPS on mount, unit switch, and shift start
+  useEffect(() => {
+    acquireHardwareGps();
+  }, [acquireHardwareGps]);
+
+  useEffect(() => {
+    if (ambulanceId) acquireHardwareGps();
+  }, [ambulanceId, acquireHardwareGps]);
+
+  useEffect(() => {
+    if (isLoggedIn) acquireHardwareGps();
+  }, [isLoggedIn, acquireHardwareGps]);
 
   // Pulse green indicator on every emitted packet
   useEffect(() => {
@@ -376,6 +460,7 @@ export default function App() {
           lat: myLocation?.lat,
           lng: myLocation?.lng
         });
+        acquireHardwareGps();
       });
 
       newSocket.on('new_assignment', (data) => {
@@ -498,14 +583,54 @@ export default function App() {
     }
   }, [isLoggedIn, ambulanceId]);
 
+  const handleRouteInfo = (info) => {
+    setRouteInfo(info);
+    if (info?.routeGeometry) {
+      latestRouteGeometryRef.current = info.routeGeometry;
+      if (socket && assignment) {
+        socket.emit('update_location', {
+          ambulanceId,
+          ambulance_id: ambulanceId,
+          emergencyId: assignment.emergency_id,
+          emergency_id: assignment.emergency_id,
+          route_geometry: info.routeGeometry,
+          distance_km: info.distanceKm,
+          eta: info.etaMins
+        });
+      }
+    }
+  };
+
   const respondToAssignment = async (accepted) => {
     try {
+      if (accepted) {
+        acquireHardwareGps();
+      }
+
       if (socket && assignment) {
         socket.emit('driver_status_update', {
           ambulance_id: ambulanceId,
           emergency_id: assignment.emergency_id,
           status: accepted ? 'en_route_to_patient' : 'idle'
         });
+
+        if (accepted && myLocation) {
+          socket.emit('update_location', {
+            ambulanceId,
+            ambulance_id: ambulanceId,
+            emergencyId: assignment.emergency_id,
+            emergency_id: assignment.emergency_id,
+            latitude: myLocation.lat,
+            longitude: myLocation.lng,
+            location: myLocation,
+            accuracy: telemetry.accuracy,
+            heading: telemetry.heading,
+            speed: telemetry.speed,
+            timestamp: new Date().toISOString(),
+            status: 'en_route_to_patient',
+            route_geometry: latestRouteGeometryRef.current
+          });
+        }
       }
 
       await fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/respond`, {
@@ -518,9 +643,27 @@ export default function App() {
           emergency_type: assignment.emergency_type,
           severity: assignment.severity,
           hospital: assignment.hospital,
-          eta: assignment.eta
+          eta: assignment.eta,
+          location: myLocation,
+          lat: myLocation?.lat,
+          lng: myLocation?.lng
         })
       });
+
+      if (accepted && myLocation) {
+        fetch(`${API_BASE_URL}/api/ambulances/${ambulanceId}/location`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ambulance_id: ambulanceId,
+            emergency_id: assignment.emergency_id,
+            lat: myLocation.lat,
+            lng: myLocation.lng,
+            accuracy: telemetry.accuracy,
+            timestamp: new Date().toISOString()
+          })
+        }).catch(() => {});
+      }
       
       if (accepted) {
         setStatus('en_route_to_patient');
@@ -662,7 +805,13 @@ export default function App() {
               <option key={u.id} value={u.id}>{u.alias} — {u.label}</option>
             ))}
           </select>
-          <button onClick={() => setIsLoggedIn(true)} style={{ width: '100%', padding: '16px', fontSize: 18, background: '#d32f2f', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(211, 47, 47, 0.3)' }}>
+          <button 
+            onClick={() => {
+              setIsLoggedIn(true);
+              acquireHardwareGps();
+            }} 
+            style={{ width: '100%', padding: '16px', fontSize: 18, background: '#d32f2f', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(211, 47, 47, 0.3)' }}
+          >
             Start Shift
           </button>
         </div>
@@ -873,57 +1022,60 @@ export default function App() {
             {/* Live Navigation Map Card */}
             <div style={{ height: '520px', borderRadius: '16px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.06)', position: 'relative' }}>
               
-              {GOOGLE_MAPS_KEY && myLocation && activeDestination ? (
-                <GoogleMapsNavigation
-                  start={myLocation}
-                  end={activeDestination}
-                  heading={telemetry.heading}
-                  isFollowing={isFollowing}
-                  onUserPan={() => setIsFollowing(false)}
-                  onRecenter={handleRecenter}
-                />
-              ) : (
-                <MapContainer 
-                  center={myLocation ? [myLocation.lat, myLocation.lng] : [assignment.patient_location.lat, assignment.patient_location.lng]} 
-                  zoom={15} 
-                  style={{ height: '100%', width: '100%' }}
-                  whenCreated={(map) => { mapInstanceRef.current = map; }}
-                >
-                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                  
-                  {/* Google Maps-Style Smooth Camera Auto-Follower */}
-                  <CameraFollower 
-                    location={myLocation} 
-                    isFollowing={isFollowing} 
-                    onUserPan={() => setIsFollowing(false)} 
+              {(() => {
+                const driverAmbulanceLocation = myLocation || assignment?.ambulance?.location;
+                return GOOGLE_MAPS_KEY && driverAmbulanceLocation && activeDestination ? (
+                  <GoogleMapsNavigation
+                    start={driverAmbulanceLocation}
+                    end={activeDestination}
+                    heading={telemetry.heading}
+                    isFollowing={isFollowing}
+                    onUserPan={() => setIsFollowing(false)}
+                    onRecenter={handleRecenter}
                   />
+                ) : (
+                  <MapContainer 
+                    center={driverAmbulanceLocation ? [driverAmbulanceLocation.lat, driverAmbulanceLocation.lng] : [assignment.patient_location.lat, assignment.patient_location.lng]} 
+                    zoom={15} 
+                    style={{ height: '100%', width: '100%' }}
+                    whenCreated={(map) => { mapInstanceRef.current = map; }}
+                  >
+                    <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                    
+                    {/* Google Maps-Style Smooth Camera Auto-Follower */}
+                    <CameraFollower 
+                      location={driverAmbulanceLocation} 
+                      isFollowing={isFollowing} 
+                      onUserPan={() => setIsFollowing(false)} 
+                    />
 
-                  {/* Rotatable Driver Ambulance Marker */}
-                  {myLocation && (
-                    <Marker position={[myLocation.lat, myLocation.lng]} icon={createAmbulanceIcon(telemetry.heading)}>
-                      <Popup>
-                        <strong>Ambulance Unit</strong><br />
-                        Speed: {telemetry.speed} km/h<br />
-                        Heading: {telemetry.heading}°
-                      </Popup>
-                    </Marker>
-                  )}
+                    {/* Rotatable Driver Ambulance Marker - Live hardware GPS strictly prioritized */}
+                    {driverAmbulanceLocation && (
+                      <Marker position={[driverAmbulanceLocation.lat, driverAmbulanceLocation.lng]} icon={createAmbulanceIcon(telemetry.heading)}>
+                        <Popup>
+                          <strong>Ambulance Unit</strong><br />
+                          Speed: {telemetry.speed} km/h<br />
+                          Heading: {telemetry.heading}°
+                        </Popup>
+                      </Marker>
+                    )}
 
-                  {/* Patient Pin */}
-                  {assignment.patient_location && (
-                    <Marker position={[assignment.patient_location.lat, assignment.patient_location.lng]}>
-                      <Popup>Patient Location</Popup>
-                    </Marker>
-                  )}
+                    {/* Patient Pin */}
+                    {assignment.patient_location && (
+                      <Marker position={[assignment.patient_location.lat, assignment.patient_location.lng]}>
+                        <Popup>Patient Location</Popup>
+                      </Marker>
+                    )}
 
-                  {/* Dynamic Road Route */}
-                  <Routing 
-                    start={myLocation || assignment.patient_location} 
-                    end={activeDestination} 
-                    onRouteInfo={setRouteInfo}
-                  />
-                </MapContainer>
-              )}
+                    {/* Dynamic Road Route */}
+                    <Routing 
+                      start={driverAmbulanceLocation || assignment.patient_location} 
+                      end={activeDestination} 
+                      onRouteInfo={handleRouteInfo}
+                    />
+                  </MapContainer>
+                );
+              })()}
 
               {/* Floating Recenter Button (Just like Google Maps) */}
               {!isFollowing && (

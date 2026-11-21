@@ -1665,6 +1665,11 @@ def process_location_update(data):
                 fleet_amb['heading'] = heading
             if speed is not None:
                 fleet_amb['speed'] = speed
+            for d in DEFAULT_AMBULANCES:
+                if d['id'] == amb_id:
+                    d['location'] = {'lat': lat, 'lng': lng}
+                    if heading is not None: d['heading'] = heading
+                    if speed is not None: d['speed'] = speed
             update_ambulance_status(amb_id, {'location_lat': lat, 'location_lng': lng})
             return True, {
                 'code': 'IDLE_LOCATION_UPDATED',
@@ -1760,6 +1765,9 @@ def process_location_update(data):
     for a in fetch_ambulances():
         if a['id'] == amb_id:
             a['location'] = {'lat': lat, 'lng': lng}
+    for d in DEFAULT_AMBULANCES:
+        if d['id'] == amb_id:
+            d['location'] = {'lat': lat, 'lng': lng}
 
     tracking['status'] = 'live'
     tracking['latest_location'] = current_loc_dict
@@ -1769,6 +1777,13 @@ def process_location_update(data):
     tracking['last_update_iso'] = iso_timestamp
 
     active['ambulance_location'] = {'lat': lat, 'lng': lng}
+    if 'ambulance' in active and isinstance(active['ambulance'], dict):
+        active['ambulance']['location'] = {'lat': lat, 'lng': lng}
+
+    # Store route geometry if provided by driver routing engine
+    route_geom = data.get('route_geometry') or data.get('route')
+    if route_geom and isinstance(route_geom, list):
+        active['route_geometry'] = route_geom
 
     # Determine Phase, target, ETA & remaining distance
     phase = active.get('phase', 'to_patient')
@@ -1867,6 +1882,8 @@ def process_location_update(data):
         'distance_km': remaining_dist_km,
         'distanceMeters': remaining_dist_meters,
         'distance_meters': remaining_dist_meters,
+        'route_geometry': active.get('route_geometry'),
+        'route': active.get('route_geometry'),
         'isRealtime': True,
         'is_realtime': True
     }
@@ -2390,8 +2407,11 @@ def handle_join_ambulance(data):
                 for a in fetch_ambulances():
                     if a['id'] == ambulance_id:
                         a['location'] = {'lat': lat, 'lng': lng}
-                        break
+                for d in DEFAULT_AMBULANCES:
+                    if d['id'] == ambulance_id:
+                        d['location'] = {'lat': lat, 'lng': lng}
                 update_ambulance_status(ambulance_id, {'location_lat': lat, 'location_lng': lng})
+                process_location_update({'ambulance_id': ambulance_id, 'latitude': lat, 'longitude': lng})
         emit('joined', {'ambulance_id': ambulance_id})
 
 @socketio.on('join_hospital')
@@ -2434,6 +2454,25 @@ def ambulance_respond(ambulance_id):
         return jsonify({'error': 'Unknown ambulance'}), 404
 
     if accepted:
+        # Check if driver provided their real device GPS upon accepting
+        driver_loc = data.get('location') or {}
+        driver_lat = data.get('lat') if data.get('lat') is not None else (data.get('latitude') if data.get('latitude') is not None else driver_loc.get('lat'))
+        driver_lng = data.get('lng') if data.get('lng') is not None else (data.get('longitude') if data.get('longitude') is not None else driver_loc.get('lng'))
+        if driver_lat is not None and driver_lng is not None:
+            valid_loc, d_lat, d_lng = validate_coordinates(driver_lat, driver_lng)
+            if valid_loc:
+                process_location_update({
+                    'ambulance_id': ambulance_id,
+                    'emergency_id': emergency_id,
+                    'latitude': d_lat,
+                    'longitude': d_lng,
+                    'accuracy': data.get('accuracy'),
+                    'speed': data.get('speed', 0),
+                    'heading': data.get('heading', 0),
+                    'status': 'en_route_to_patient',
+                    'timestamp': get_utc_iso()
+                })
+
         update_ambulance_status(ambulance_id, {'driver_status': 'accepted'})
         socketio.emit('driver_responded', {
             'ambulance_id': ambulance_id,
@@ -2558,7 +2597,8 @@ def ambulance_status(ambulance_id):
         return jsonify(result), 404
     return jsonify({'ok': True})
 
-@app.route('/api/ambulance/<ambulance_id>/location', methods=['POST'])
+@app.route('/api/ambulance/<ambulance_id>/location', methods=['POST', 'PATCH'])
+@app.route('/api/ambulances/<ambulance_id>/location', methods=['POST', 'PATCH'])
 def update_ambulance_gps(ambulance_id):
     data = request.json or {}
     data['ambulance_id'] = ambulance_id

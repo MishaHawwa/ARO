@@ -274,41 +274,61 @@ const formatAmbulanceAlias = (uuid) => {
   return `KA-${part1}-${part2}`;
 };
 
-// Instant realistic street path generator (0ms network latency, never hangs)
-function generateRoadWaypoints(start, end) {
-  if (!start || !end) return [];
+// Haversine distance in meters for GPS threshold evaluation
+function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+  if (lat1 === lat2 && lon1 === lon2) return 0;
+  const R = 6371e3;
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+    Math.cos(phi1) * Math.cos(phi2) *
+    Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Fetch live road geometry directly from OSRM public API (never diagonal straight lines)
+async function fetchOsrmRoadGeometry(start, end) {
+  if (!start || !end) return null;
   const lat1 = start.lat !== undefined ? start.lat : start[0];
   const lng1 = start.lng !== undefined ? start.lng : start[1];
   const lat2 = end.lat !== undefined ? end.lat : end[0];
   const lng2 = end.lng !== undefined ? end.lng : end[1];
 
-  const dLat = lat2 - lat1;
-  const dLng = lng2 - lng1;
-  if (Math.abs(dLat) < 0.0001 && Math.abs(dLng) < 0.0001) {
-    return [[lat1, lng1], [lat2, lng2]];
+  if (typeof lat1 !== 'number' || typeof lng1 !== 'number' || typeof lat2 !== 'number' || typeof lng2 !== 'number') {
+    return null;
   }
 
-  // Generate realistic street turns along urban corridors
-  const pts = [
-    [lat1, lng1],
-    [lat1 + dLat * 0.45, lng1 + dLng * 0.08],
-    [lat1 + dLat * 0.52, lng1 + dLng * 0.82],
-    [lat2, lng2]
-  ];
+  const dLat = Math.abs(lat1 - lat2);
+  const dLng = Math.abs(lng1 - lng2);
+  if (dLat < 0.0001 && dLng < 0.0001) {
+    return { points: [[lat1, lng1], [lat2, lng2]], durationSec: 10, distanceM: 50 };
+  }
 
-  // Smooth into dense road-following points
-  const smooth = [];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const pA = pts[i];
-    const pB = pts[i + 1];
-    const steps = 6;
-    for (let s = 0; s < steps; s++) {
-      const f = s / steps;
-      smooth.push([pA[0] + (pB[0] - pA[0]) * f, pA[1] + (pB[1] - pA[1]) * f]);
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${lng1},${lat1};${lng2},${lat2}?overview=full&geometries=geojson`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const resp = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    if (json?.routes?.[0]?.geometry?.coordinates?.length > 1) {
+      // Decode GeoJSON [lng, lat] coordinates into Leaflet [lat, lng] points
+      const points = json.routes[0].geometry.coordinates.map(pt => [pt[1], pt[0]]);
+      return {
+        points,
+        durationSec: json.routes[0].duration,
+        distanceM: json.routes[0].distance
+      };
     }
+  } catch (err) {
+    console.warn('[TrackingScreen OSRM fetch]:', err.message);
   }
-  smooth.push([lat2, lng2]);
-  return smooth;
+  return null;
 }
 
 function TrackingScreen({ data, onBack }) {
@@ -406,12 +426,11 @@ function TrackingScreen({ data, onBack }) {
     };
   }, []);
 
-  const [patientRoute, setPatientRoute] = useState(() => 
-    generateRoadWaypoints(initialAmbulanceLoc, data.patient_location)
-  );
-  const [hospitalRoute, setHospitalRoute] = useState(() => 
-    generateRoadWaypoints(data.patient_location, data.hospital.location)
-  );
+  const [roadRoute, setRoadRoute] = useState([]);
+  const [secondaryHospitalRoute, setSecondaryHospitalRoute] = useState([]);
+  const lastRouteFetchTimeRef = React.useRef(0);
+  const lastRouteFetchLocRef = React.useRef(null);
+  const isFetchingRouteRef = React.useRef(false);
 
   // Live Patient Device GPS Tracking (streams real location to backend, ambulance, and hospital)
   useEffect(() => {
@@ -476,60 +495,75 @@ function TrackingScreen({ data, onBack }) {
     return () => clearInterval(timer);
   }, [trackingState]);
 
-  // Background road route enhancer (optional, max 800ms abort so it never blocks)
+  const isHeadingToHospital = (
+    journeyPhase === 'to_hospital' ||
+    journeyPhase === 'transporting' ||
+    ambulanceStatus.toLowerCase().includes('hospital') ||
+    ambulanceStatus.toLowerCase().includes('picked') ||
+    ambulanceStatus.toLowerCase().includes('transporting')
+  );
+
+  const activeTarget = isHeadingToHospital
+    ? (assignedHospitalData?.location || data?.hospital?.location)
+    : (patientLocation || data?.patient_location);
+
+  // Throttled OSRM Public Routing API: fetches every 10s or when ambulance moves > 30m
   useEffect(() => {
-    if (!data?.ambulance?.location || !data?.patient_location || !data?.hospital?.location) return;
+    if (!ambulanceLocation || !activeTarget || !ambulanceLocation.lat || !activeTarget.lat) return;
 
-    const amb = initialAmbulanceLoc;
-    const pat = data.patient_location;
-    const hosp = data.hospital.location;
-    let isMounted = true;
+    const now = Date.now();
+    const timeSinceLastFetch = now - lastRouteFetchTimeRef.current;
+    let distMoved = 999;
+    if (lastRouteFetchLocRef.current) {
+      distMoved = calculateDistanceMeters(
+        lastRouteFetchLocRef.current.lat,
+        lastRouteFetchLocRef.current.lng,
+        ambulanceLocation.lat,
+        ambulanceLocation.lng
+      );
+    }
 
-    const enhanceWithOSRM = async () => {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 800);
+    const shouldFetch = (
+      roadRoute.length === 0 ||
+      timeSinceLastFetch >= 10000 ||
+      distMoved >= 30.0
+    );
 
-        const [res1, res2] = await Promise.all([
-          fetch(
-            `https://router.project-osrm.org/route/v1/driving/${amb.lng},${amb.lat};${pat.lng},${pat.lat}?overview=full&geometries=geojson`,
-            { signal: controller.signal }
-          ).catch(() => null),
-          fetch(
-            `https://router.project-osrm.org/route/v1/driving/${pat.lng},${pat.lat};${hosp.lng},${hosp.lat}?overview=full&geometries=geojson`,
-            { signal: controller.signal }
-          ).catch(() => null)
-        ]);
+    if (!shouldFetch || isFetchingRouteRef.current) return;
 
-        clearTimeout(timeoutId);
-        if (!isMounted) return;
+    isFetchingRouteRef.current = true;
+    lastRouteFetchTimeRef.current = now;
+    lastRouteFetchLocRef.current = { lat: ambulanceLocation.lat, lng: ambulanceLocation.lng };
 
-        if (res1 && res1.ok) {
-          const json1 = await res1.json();
-          if (json1?.routes?.[0]?.geometry?.coordinates?.length > 1) {
-            setPatientRoute(json1.routes[0].geometry.coordinates.map(c => [c[1], c[0]]));
-            if (json1.routes[0].duration) {
-              const mins = Math.max(1, Math.round(json1.routes[0].duration / 60));
-              setLiveEta(mins);
-            }
-            if (json1.routes[0].distance) {
-              setLiveDistance(Number((json1.routes[0].distance / 1000).toFixed(1)));
-            }
+    fetchOsrmRoadGeometry(ambulanceLocation, activeTarget)
+      .then(res => {
+        if (res && res.points && res.points.length > 0) {
+          setRoadRoute(res.points);
+          if (res.durationSec) {
+            setLiveEta(Math.max(1, Math.round(res.durationSec / 60)));
+          }
+          if (res.distanceM) {
+            setLiveDistance(Number((res.distanceM / 1000).toFixed(1)));
           }
         }
+      })
+      .finally(() => {
+        isFetchingRouteRef.current = false;
+      });
+  }, [ambulanceLocation?.lat, ambulanceLocation?.lng, activeTarget?.lat, activeTarget?.lng, isHeadingToHospital, roadRoute.length]);
 
-        if (res2 && res2.ok) {
-          const json2 = await res2.json();
-          if (json2?.routes?.[0]?.geometry?.coordinates?.length > 1) {
-            setHospitalRoute(json2.routes[0].geometry.coordinates.map(c => [c[1], c[0]]));
-          }
-        }
-      } catch (err) {}
-    };
+  // Secondary hospital road path (Patient to Hospital, shown while en route to patient)
+  useEffect(() => {
+    const patLoc = patientLocation || data?.patient_location;
+    const hospLoc = assignedHospitalData?.location || data?.hospital?.location;
+    if (!patLoc || !hospLoc || !patLoc.lat || !hospLoc.lat) return;
 
-    enhanceWithOSRM();
-    return () => { isMounted = false; };
-  }, [data, initialAmbulanceLoc]);
+    fetchOsrmRoadGeometry(patLoc, hospLoc).then(res => {
+      if (res && res.points && res.points.length > 0) {
+        setSecondaryHospitalRoute(res.points);
+      }
+    });
+  }, [patientLocation?.lat, patientLocation?.lng, assignedHospitalData?.location?.lat, assignedHospitalData?.location?.lng]);
 
   // Socket.IO real-time tracking subscription & event listener lifecycle
   useEffect(() => {
@@ -661,6 +695,20 @@ function TrackingScreen({ data, onBack }) {
       if (update.distanceKm !== undefined) setLiveDistance(update.distanceKm);
       else if (update.distance_km !== undefined) setLiveDistance(update.distance_km);
 
+      // Ingest live road geometry if provided by ambulance or backend
+      if (update.route_geometry && Array.isArray(update.route_geometry) && update.route_geometry.length > 1) {
+        const firstPt = update.route_geometry[0];
+        let formattedPts = update.route_geometry;
+        if (firstPt && typeof firstPt.lat === 'number') {
+          formattedPts = update.route_geometry.map(p => [p.lat, p.lng]);
+        }
+        setRoadRoute(formattedPts);
+        lastRouteFetchTimeRef.current = Date.now();
+        if (typeof lat === 'number' && typeof lng === 'number') {
+          lastRouteFetchLocRef.current = { lat, lng };
+        }
+      }
+
       setTelemetry({
         accuracy: update.accuracy !== undefined ? update.accuracy : null,
         speed: update.speed !== undefined ? update.speed : null,
@@ -755,20 +803,6 @@ function TrackingScreen({ data, onBack }) {
       socket.disconnect();
     };
   }, [data, initialAmbulanceLoc, activeAmbulance.id]);
-
-  // Live dynamic route line updating as the ambulance travels in real-time
-  useEffect(() => {
-    if (!ambulanceLocation) return;
-    if (journeyPhase === 'to_hospital') {
-      if (data?.hospital?.location) {
-        setHospitalRoute(generateRoadWaypoints(ambulanceLocation, data.hospital.location));
-      }
-    } else {
-      if (data?.patient_location) {
-        setPatientRoute(generateRoadWaypoints(ambulanceLocation, data.patient_location));
-      }
-    }
-  }, [ambulanceLocation, journeyPhase, data?.patient_location, data?.hospital?.location]);
 
   const formatCountdown = () => {
     if (ambulanceStatus.includes('Arrived at Hospital')) return 'Arrived';
@@ -1003,55 +1037,57 @@ function TrackingScreen({ data, onBack }) {
               </Marker>
               
               {/* Google Maps Highlighted Road Directions */}
-              {/* Leg 1: Ambulance to Patient (Google Maps blue road route) */}
-              {patientRoute.length > 0 ? (
+              {/* Primary Active Leg: Ambulance to Active Target (Road path via OSRM / backend) */}
+              {roadRoute.length > 0 ? (
                 <>
                   <Polyline 
-                    positions={patientRoute} 
+                    positions={roadRoute} 
                     pathOptions={{ color: '#1a73e8', weight: 8, opacity: 0.35, lineCap: 'round', lineJoin: 'round' }} 
                   />
                   <Polyline 
-                    positions={patientRoute} 
+                    positions={roadRoute} 
                     pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }} 
                   />
                 </>
               ) : (
                 <Polyline 
-                  positions={[[ambulanceLocation.lat, ambulanceLocation.lng], [data.patient_location.lat, data.patient_location.lng]]} 
+                  positions={[[ambulanceLocation.lat, ambulanceLocation.lng], [activeTarget?.lat || data.patient_location.lat, activeTarget?.lng || data.patient_location.lng]]} 
                   pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.8 }} 
                 />
               )}
 
-              {/* Leg 2: Patient to Hospital (Google Maps emerald road route) */}
-              {hospitalRoute.length > 0 ? (
-                <>
+              {/* Secondary Leg: Patient to Hospital (Shown while ambulance is en route to patient) */}
+              {!isHeadingToHospital && (
+                secondaryHospitalRoute.length > 0 ? (
+                  <>
+                    <Polyline 
+                      positions={secondaryHospitalRoute} 
+                      pathOptions={{ 
+                        color: '#059669', 
+                        weight: 7, 
+                        opacity: 0.3, 
+                        lineCap: 'round', 
+                        lineJoin: 'round' 
+                      }} 
+                    />
+                    <Polyline 
+                      positions={secondaryHospitalRoute} 
+                      pathOptions={{ 
+                        color: '#10b981', 
+                        weight: 4, 
+                        dashArray: '6, 8', 
+                        opacity: 0.95, 
+                        lineCap: 'round', 
+                        lineJoin: 'round' 
+                      }} 
+                    />
+                  </>
+                ) : (
                   <Polyline 
-                    positions={hospitalRoute} 
-                    pathOptions={{ 
-                      color: journeyPhase === 'to_hospital' ? '#1a73e8' : '#059669', 
-                      weight: journeyPhase === 'to_hospital' ? 8 : 7, 
-                      opacity: 0.3, 
-                      lineCap: 'round', 
-                      lineJoin: 'round' 
-                    }} 
+                    positions={[[data.patient_location.lat, data.patient_location.lng], [data.hospital.location.lat, data.hospital.location.lng]]} 
+                    pathOptions={{ color: '#10b981', weight: 4, dashArray: '6, 8', opacity: 0.8 }} 
                   />
-                  <Polyline 
-                    positions={hospitalRoute} 
-                    pathOptions={{ 
-                      color: journeyPhase === 'to_hospital' ? '#2563eb' : '#10b981', 
-                      weight: journeyPhase === 'to_hospital' ? 5 : 4, 
-                      dashArray: journeyPhase === 'to_hospital' ? null : '6, 8', 
-                      opacity: 0.95, 
-                      lineCap: 'round', 
-                      lineJoin: 'round' 
-                    }} 
-                  />
-                </>
-              ) : (
-                <Polyline 
-                  positions={[[data.patient_location.lat, data.patient_location.lng], [data.hospital.location.lat, data.hospital.location.lng]]} 
-                  pathOptions={{ color: '#10b981', weight: 4, dashArray: '6, 8', opacity: 0.8 }} 
-                />
+                )
               )}
             </MapContainer>
           )}
