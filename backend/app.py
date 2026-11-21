@@ -1734,19 +1734,20 @@ def process_location_update(data):
     _ambulance_rate_limits[amb_id] = now_time
 
     # Stationary detection (Google Maps navigation behavior):
-    # If device speed < 1.0 m/s (approx 3.6 km/h) or displacement from last reading < 5.0 meters
+    # Strictly marked stationary ONLY if displacement < 1.0 meter AND (speed is None or speed < 1.0 km/h).
+    # Any movement >= 1.0m is immediately processed as dynamic physical movement.
     is_stationary = False
-    if speed is not None:
-        try:
-            raw_speed = float(speed)
-            if raw_speed < 1.0:
+    if prev_loc:
+        if displacement_meters < 1.0:
+            if speed is not None:
+                try:
+                    raw_speed = float(speed)
+                    if raw_speed < 1.0:
+                        is_stationary = True
+                except (ValueError, TypeError):
+                    is_stationary = True
+            else:
                 is_stationary = True
-            elif raw_speed < 3.6 and displacement_meters < 5.0:
-                is_stationary = True
-        except (ValueError, TypeError):
-            pass
-    elif prev_loc and displacement_meters < 5.0:
-        is_stationary = True
 
     # Update in-memory state
     current_loc_dict = {
@@ -2003,7 +2004,16 @@ def handle_update_location(data):
         return
 
     raw_id = data.get('tripId') or data.get('trip_id') or data.get('emergencyId') or data.get('emergency_id')
+    amb_id = data.get('ambulanceId') or data.get('ambulance_id')
+    if not raw_id and amb_id:
+        for e_id, e_info in ACTIVE_EMERGENCIES.items():
+            if e_info.get('ambulance_id') == amb_id:
+                raw_id = e_id
+                break
+
     if not raw_id:
+        if amb_id:
+            process_location_update(data)
         return
     clean_id = str(raw_id).replace('trip_', '')
     trip_room = f"trip_{clean_id}"

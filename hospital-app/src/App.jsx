@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import io from 'socket.io-client';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -13,6 +13,27 @@ L.Icon.Default.mergeOptions({
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
+
+function calculateBearing(lat1, lon1, lat2, lon2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const toDeg = (r) => (r * 180) / Math.PI;
+  const phi1 = toRad(lat1);
+  const phi2 = toRad(lat2);
+  const deltaLambda = toRad(lon2 - lon1);
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(deltaLambda);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function RadarFollower({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && typeof center[0] === 'number' && typeof center[1] === 'number' && !isNaN(center[0])) {
+      map.panTo(center, { animate: true, duration: 0.8 });
+    }
+  }, [center, map]);
+  return null;
+}
 
 const createAmbulanceIcon = (heading = 0) => L.divIcon({
   className: 'rotatable-hospital-ambulance-marker',
@@ -234,6 +255,17 @@ export default function App() {
           const lng = update.lng !== undefined ? update.lng : (update.longitude !== undefined ? update.longitude : update.location?.lng);
           const loc = (lat !== undefined && lng !== undefined) ? { lat, lng } : existing.ambulance_location;
 
+          let calculatedHeading = update.heading;
+          if ((calculatedHeading === null || calculatedHeading === undefined || calculatedHeading === 0) && existing.ambulance_location && loc) {
+            const dLat = Math.abs(loc.lat - existing.ambulance_location.lat);
+            const dLng = Math.abs(loc.lng - existing.ambulance_location.lng);
+            if (dLat > 0.00001 || dLng > 0.00001) {
+              calculatedHeading = Math.round(calculateBearing(existing.ambulance_location.lat, existing.ambulance_location.lng, loc.lat, loc.lng));
+            } else {
+              calculatedHeading = existing.heading || 0;
+            }
+          }
+
           return {
             ...prev,
             [emgId]: {
@@ -242,7 +274,7 @@ export default function App() {
               ambulance_status: update.status || existing.ambulance_status,
               eta: update.eta !== undefined ? update.eta : existing.eta,
               distance: update.distance_km || update.distanceKm || existing.distance,
-              heading: update.heading !== undefined ? update.heading : existing.heading,
+              heading: calculatedHeading !== undefined ? calculatedHeading : existing.heading,
               speed: update.speed !== undefined ? update.speed : existing.speed,
               last_updated: Date.now()
             }
@@ -1076,6 +1108,9 @@ export default function App() {
                         zoomControl={false}
                       >
                         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                        {emg.ambulance_location && (
+                          <RadarFollower center={[emg.ambulance_location.lat, emg.ambulance_location.lng]} />
+                        )}
                         {emg.ambulance_location && (
                           <Marker position={[emg.ambulance_location.lat, emg.ambulance_location.lng]} icon={createAmbulanceIcon(emg.heading)}>
                             <Popup>

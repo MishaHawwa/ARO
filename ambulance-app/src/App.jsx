@@ -8,6 +8,7 @@ import 'leaflet-routing-machine/dist/leaflet-routing-machine.css';
 import useLocationTracking from './hooks/useLocationTracking';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://aro-backend-tvkq.onrender.com';
+const GOOGLE_MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -16,13 +17,75 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+// Rotatable Google Maps-style navigation arrow/ambulance icon
+const createAmbulanceIcon = (heading = 0) => L.divIcon({
+  className: 'rotatable-driver-ambulance-marker',
+  html: `
+    <div style="
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: rotate(${heading || 0}deg);
+      transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1);
+    ">
+      <div style="
+        background: #d32f2f;
+        color: white;
+        border: 2px solid white;
+        border-radius: 50%;
+        width: 38px;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+        font-size: 20px;
+      ">
+        🚑
+      </div>
+    </div>
+  `,
+  iconSize: [44, 44],
+  iconAnchor: [22, 22]
+});
+
+// Google Maps-Style Live Camera Follower & User Drag Detector
+function CameraFollower({ location, isFollowing, onUserPan }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map) return;
+    const handleDragStart = () => {
+      if (onUserPan) onUserPan();
+    };
+    map.on('dragstart', handleDragStart);
+    return () => {
+      map.off('dragstart', handleDragStart);
+    };
+  }, [map, onUserPan]);
+
+  useEffect(() => {
+    if (!map || !location || !isFollowing) return;
+    map.panTo([location.lat, location.lng], {
+      animate: true,
+      duration: 0.8,
+      easeLinearity: 0.25
+    });
+  }, [map, location?.lat, location?.lng, isFollowing]);
+
+  return null;
+}
+
+// OSRM Routing with no forced zoom fighting
 function Routing({ start, end, onRouteInfo }) {
   const map = useMap();
+  const routingControlRef = useRef(null);
 
   useEffect(() => {
     if (!map || !start || !end) return;
 
-    // Check if start and end are virtually identical (e.g. testing on same device)
     const dLat = Math.abs(start.lat - end.lat);
     const dLng = Math.abs(start.lng - end.lng);
     if (dLat < 0.0001 && dLng < 0.0001) {
@@ -35,14 +98,22 @@ function Routing({ start, end, onRouteInfo }) {
       return;
     }
 
-    const routingControl = L.Routing.control({
+    if (routingControlRef.current) {
+      try {
+        map.removeControl(routingControlRef.current);
+      } catch (e) {}
+    }
+
+    const control = L.Routing.control({
       waypoints: [
         L.latLng(start.lat, start.lng),
         L.latLng(end.lat, end.lng)
       ],
       routeWhileDragging: false,
       showAlternatives: false,
-      fitSelectedRoutes: true,
+      fitSelectedRoutes: false, // Critical: don't zoom out or fight camera follow
+      show: false,
+      addWaypoints: false,
       lineOptions: {
         styles: [
           { color: '#1a73e8', weight: 8, opacity: 0.35 },
@@ -51,7 +122,7 @@ function Routing({ start, end, onRouteInfo }) {
       }
     }).addTo(map);
 
-    routingControl.on('routesfound', (e) => {
+    control.on('routesfound', (e) => {
       if (e.routes && e.routes[0] && e.routes[0].summary) {
         const s = e.routes[0].summary;
         if (onRouteInfo) {
@@ -63,10 +134,153 @@ function Routing({ start, end, onRouteInfo }) {
       }
     });
 
-    return () => map.removeControl(routingControl);
-  }, [map, start, end, onRouteInfo]);
+    routingControlRef.current = control;
+
+    return () => {
+      if (routingControlRef.current) {
+        try {
+          map.removeControl(routingControlRef.current);
+        } catch (e) {}
+      }
+    };
+  }, [map, start?.lat, start?.lng, end?.lat, end?.lng, onRouteInfo]);
 
   return null;
+}
+
+// Optional Google Maps Component whenever VITE_GOOGLE_MAPS_API_KEY is supplied
+function GoogleMapsNavigation({ start, end, heading = 0, isFollowing, onUserPan, onRecenter }) {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+  const markerRef = useRef(null);
+  const directionsRendererRef = useRef(null);
+
+  useEffect(() => {
+    if (!GOOGLE_MAPS_KEY) return;
+
+    const scriptId = 'google-maps-sdk';
+    const initMap = () => {
+      if (!window.google || !containerRef.current) return;
+      const gMap = new window.google.maps.Map(containerRef.current, {
+        center: { lat: start.lat, lng: start.lng },
+        zoom: 16,
+        disableDefaultUI: false,
+        zoomControl: true,
+        streetViewControl: false,
+        fullscreenControl: false
+      });
+
+      new window.google.maps.TrafficLayer().setMap(gMap);
+
+      gMap.addListener('dragstart', () => {
+        if (onUserPan) onUserPan();
+      });
+
+      mapRef.current = gMap;
+
+      const marker = new window.google.maps.Marker({
+        position: { lat: start.lat, lng: start.lng },
+        map: gMap,
+        title: 'Ambulance Unit',
+        icon: {
+          path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+          scale: 6,
+          fillColor: '#d32f2f',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+          rotation: heading || 0
+        }
+      });
+      markerRef.current = marker;
+
+      const directionsService = new window.google.maps.DirectionsService();
+      const directionsRenderer = new window.google.maps.DirectionsRenderer({
+        map: gMap,
+        suppressMarkers: true,
+        polylineOptions: {
+          strokeColor: '#2563eb',
+          strokeWeight: 6,
+          strokeOpacity: 0.9
+        }
+      });
+      directionsRendererRef.current = directionsRenderer;
+
+      if (end) {
+        directionsService.route(
+          {
+            origin: { lat: start.lat, lng: start.lng },
+            destination: { lat: end.lat, lng: end.lng },
+            travelMode: window.google.maps.TravelMode.DRIVING
+          },
+          (result, status) => {
+            if (status === 'OK') {
+              directionsRenderer.setDirections(result);
+            }
+          }
+        );
+      }
+    };
+
+    if (window.google && window.google.maps) {
+      initMap();
+    } else if (!document.getElementById(scriptId)) {
+      const script = document.createElement('script');
+      script.id = scriptId;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_KEY}&libraries=places`;
+      script.async = true;
+      script.defer = true;
+      script.onload = initMap;
+      document.head.appendChild(script);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!mapRef.current || !start) return;
+    if (markerRef.current) {
+      markerRef.current.setPosition({ lat: start.lat, lng: start.lng });
+      markerRef.current.setIcon({
+        path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+        scale: 6,
+        fillColor: '#d32f2f',
+        fillOpacity: 1,
+        strokeColor: '#ffffff',
+        strokeWeight: 2,
+        rotation: heading || 0
+      });
+    }
+    if (isFollowing) {
+      mapRef.current.panTo({ lat: start.lat, lng: start.lng });
+    }
+  }, [start?.lat, start?.lng, heading, isFollowing]);
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {!isFollowing && (
+        <button
+          onClick={onRecenter}
+          style={{
+            position: 'absolute',
+            bottom: '24px',
+            right: '24px',
+            zIndex: 1000,
+            background: '#2563eb',
+            color: 'white',
+            border: 'none',
+            borderRadius: '30px',
+            padding: '10px 18px',
+            fontWeight: 'bold',
+            fontSize: '0.9rem',
+            cursor: 'pointer',
+            boxShadow: '0 4px 14px rgba(37, 99, 235, 0.4)'
+          }}
+        >
+          📍 Recenter Camera
+        </button>
+      )}
+    </div>
+  );
 }
 
 const FLEET_UNITS = [
@@ -93,93 +307,56 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [ambulanceId, setAmbulanceId] = useState('b1c0d054-8d8a-42d6-b4fc-aecfb77f0007');
   const [socket, setSocket] = useState(null);
-  const [status, setStatus] = useState('idle'); // idle, assigned, en_route_to_patient, en_route_to_hospital, arrived_at_hospital
+  const [status, setStatus] = useState('idle');
   const [assignment, setAssignment] = useState(null);
   const [erBayNotice, setErBayNotice] = useState(null);
   const [myLocation, setMyLocation] = useState(null);
-  const [gpsPermissionError, setGpsPermissionError] = useState(null);
+  const [isFollowing, setIsFollowing] = useState(true);
+  const [isPinging, setIsPinging] = useState(false);
   const [routeInfo, setRouteInfo] = useState({ distanceKm: null, distanceMeters: null, etaMins: null, etaSeconds: null });
 
+  const mapInstanceRef = useRef(null);
   const isDebugMode = typeof window !== 'undefined' && window.location.search.includes('debug=true');
 
-  // Direct device GPS acquisition (strictly real device coordinates, high accuracy, zero cache)
-  const requestDeviceGps = useCallback(() => {
-    if (!navigator.geolocation) {
-      setGpsPermissionError('Geolocation is not supported by your browser or device.');
-      return;
+  // Unified Location Tracking Hook
+  const {
+    isTracking,
+    trackingStatus,
+    currentLocation,
+    packetCount,
+    telemetry,
+    errorMessage,
+    startTracking,
+    stopTracking
+  } = useLocationTracking({
+    socket,
+    ambulanceId,
+    emergencyId: assignment?.emergency_id || assignment?.emergencyId,
+    trackingToken: assignment?.tracking_token || assignment?.trackingToken,
+    status,
+    enabled: isLoggedIn,
+    transmissionInterval: 2000,
+    minDistanceMeters: 1.0,
+    onLocationUpdate: ({ location }) => {
+      setMyLocation(location);
     }
-    setGpsPermissionError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const coords = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude
-        };
-        setMyLocation(coords);
-        setGpsPermissionError(null);
-        if (socket && socket.connected) {
-          socket.emit('update_location', {
-            ambulance_id: ambulanceId,
-            ambulanceId,
-            lat: coords.lat,
-            lng: coords.lng,
-            latitude: coords.lat,
-            longitude: coords.lng,
-            speed: pos.coords.speed || 0,
-            heading: pos.coords.heading || 0,
-            accuracy: pos.coords.accuracy,
-            timestamp: new Date().toISOString()
-          });
-        }
-        fetch(`${API_BASE_URL}/api/ambulance/${ambulanceId}/location`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ambulance_id: ambulanceId,
-            lat: coords.lat,
-            lng: coords.lng,
-            speed: pos.coords.speed || 0,
-            heading: pos.coords.heading || 0,
-            accuracy: pos.coords.accuracy
-          })
-        }).catch(err => console.warn('Could not post initial ambulance location:', err));
-      },
-      (err) => {
-        let msg = 'Unable to obtain GPS signal.';
-        if (err.code === 1) msg = 'Location permission denied. Please enable location access in browser settings to track ambulance.';
-        else if (err.code === 2) msg = 'Position unavailable. Please ensure GPS is active on your device.';
-        else if (err.code === 3) msg = 'GPS request timed out. Retrying...';
-        setGpsPermissionError(msg);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
-  }, [ambulanceId, socket]);
+  });
 
-  // Request real hardware GPS immediately on mount and start high-accuracy continuous watch
+  // Pulse green indicator on every emitted packet
   useEffect(() => {
-    requestDeviceGps();
-    if (!navigator.geolocation) return;
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setMyLocation(coords);
-        setGpsPermissionError(null);
-      },
-      (err) => {
-        if (err.code === 1) {
-          setGpsPermissionError('Location permission denied. GPS tracking unavailable.');
-        }
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [requestDeviceGps]);
-
-  useEffect(() => {
-    if (isLoggedIn) {
-      requestDeviceGps();
+    if (packetCount > 0) {
+      setIsPinging(true);
+      const timer = setTimeout(() => setIsPinging(false), 450);
+      return () => clearTimeout(timer);
     }
-  }, [isLoggedIn, requestDeviceGps]);
+  }, [packetCount]);
+
+  // Sync currentLocation
+  useEffect(() => {
+    if (currentLocation && !myLocation) {
+      setMyLocation(currentLocation);
+    }
+  }, [currentLocation, myLocation]);
 
   // Socket connection lifecycle
   useEffect(() => {
@@ -192,7 +369,7 @@ export default function App() {
       setSocket(newSocket);
 
       newSocket.on('connect', () => {
-        console.log('Ambulance connected to backend');
+        console.log('[Ambulance App] Connected to backend');
         newSocket.emit('join_ambulance', {
           ambulance_id: ambulanceId,
           ambulanceId,
@@ -202,9 +379,10 @@ export default function App() {
       });
 
       newSocket.on('new_assignment', (data) => {
-        console.log('New assignment received:', data);
+        console.log('[Ambulance App] New assignment received:', data);
         setAssignment(data);
         setStatus('assigned');
+        setIsFollowing(true);
         const tripId = data.trip_id || `trip_${data.emergency_id}`;
         newSocket.emit('join_trip', { tripId });
         if (data.eta !== undefined) {
@@ -307,7 +485,7 @@ export default function App() {
         }
       });
 
-      newSocket.on('patient_admitted', (data) => {
+      newSocket.on('patient_admitted', () => {
         setStatus('arrived_at_hospital');
         setErBayNotice(null);
         setTimeout(() => {
@@ -318,30 +496,7 @@ export default function App() {
       
       return () => newSocket.close();
     }
-  }, [isLoggedIn, ambulanceId, myLocation?.lat, myLocation?.lng]);
-
-  // Genuine Real-Time Browser GPS Tracking via Reusable Hook
-  const {
-    isTracking,
-    trackingStatus,
-    currentLocation,
-    telemetry,
-    errorMessage,
-    startTracking,
-    stopTracking
-  } = useLocationTracking({
-    socket,
-    ambulanceId,
-    emergencyId: assignment?.emergency_id || assignment?.emergencyId,
-    trackingToken: assignment?.tracking_token || assignment?.trackingToken,
-    status,
-    enabled: isLoggedIn,
-    transmissionInterval: 2500,
-    minDistanceMeters: 3.0,
-    onLocationUpdate: ({ location }) => {
-      setMyLocation(location);
-    }
-  });
+  }, [isLoggedIn, ambulanceId]);
 
   const respondToAssignment = async (accepted) => {
     try {
@@ -369,6 +524,7 @@ export default function App() {
       
       if (accepted) {
         setStatus('en_route_to_patient');
+        setIsFollowing(true);
       } else {
         setAssignment(null);
         setStatus('idle');
@@ -394,6 +550,7 @@ export default function App() {
         body: JSON.stringify({ status: newStatus, emergency_id: assignment?.emergency_id })
       });
       setStatus(newStatus);
+      setIsFollowing(true);
       if (newStatus === 'arrived_at_hospital') {
         setTimeout(() => {
           setAssignment(null);
@@ -405,9 +562,9 @@ export default function App() {
     }
   };
 
-  // Step movement on desktop/simulator for live testing
+  // Step movement on desktop/simulator for testing
   const stepTowardsTarget = () => {
-    if (!assignment) return;
+    if (!assignment || !myLocation) return;
     const target = status === 'en_route_to_patient' ? assignment.patient_location : assignment.hospital?.location;
     if (!target) return;
     
@@ -435,14 +592,24 @@ export default function App() {
         latitude: newLoc.lat,
         longitude: newLoc.lng,
         location: newLoc,
-        accuracy: 5.0,
+        accuracy: 4.0,
         heading: 90,
         speed: 35.0,
         timestamp: new Date().toISOString(),
         status
       };
       socket.emit('ambulance:location:update', payload);
-      socket.emit('driver_location_update', payload);
+      socket.emit('update_location', payload);
+    }
+  };
+
+  const handleRecenter = () => {
+    setIsFollowing(true);
+    if (mapInstanceRef.current && myLocation) {
+      mapInstanceRef.current.panTo([myLocation.lat, myLocation.lng], {
+        animate: true,
+        duration: 0.6
+      });
     }
   };
 
@@ -503,112 +670,138 @@ export default function App() {
     );
   }
 
+  const activeDestination = status === 'en_route_to_patient' ? assignment?.patient_location : assignment?.hospital?.location;
+
   return (
-    <div style={{ fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f5f5f7', color: '#333' }}>
+    <div style={{ fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f8fafc', color: '#1e293b' }}>
+      
       {/* Top Navbar */}
-      <div style={{ padding: '16px 28px', background: 'white', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', position: 'sticky', top: 0, zIndex: 1000 }}>
+      <div style={{ padding: '14px 24px', background: 'white', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', position: 'sticky', top: 0, zIndex: 1000, flexWrap: 'wrap', gap: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '1.5rem' }}>🚑</span>
+          <span style={{ fontSize: '1.6rem' }}>🚑</span>
           <div>
-            <span style={{ fontSize: '0.75rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Vehicle Unit</span>
-            <div style={{ fontSize: '1.25rem', color: '#d32f2f', fontWeight: 'bold' }}>{formatAmbulanceAlias(ambulanceId)}</div>
+            <span style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 'bold' }}>Vehicle Unit</span>
+            <div style={{ fontSize: '1.2rem', color: '#d32f2f', fontWeight: 'bold' }}>{formatAmbulanceAlias(ambulanceId)}</div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+
+        {/* Live GPS Telemetry Pill */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          background: '#0f172a',
+          color: 'white',
+          padding: '6px 14px',
+          borderRadius: '20px',
+          fontSize: '0.8rem',
+          fontFamily: 'monospace',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+        }}>
+          <span style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            backgroundColor: trackingStatus === 'live' ? '#22c55e' : (trackingStatus === 'permission_denied' ? '#ef4444' : '#eab308'),
+            boxShadow: isPinging ? '0 0 10px #22c55e' : 'none',
+            transform: isPinging ? 'scale(1.4)' : 'scale(1.0)',
+            transition: 'all 0.2s ease',
+            display: 'inline-block'
+          }}></span>
+          <span>{myLocation ? `${myLocation.lat.toFixed(4)}, ${myLocation.lng.toFixed(4)}` : 'Locking GPS...'}</span>
+          <span>| Acc: ±{telemetry.accuracy ?? '—'}m</span>
+          <span>| {telemetry.speed ?? 0} km/h</span>
+          <span style={{ color: '#38bdf8' }}>#{packetCount}</span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           {renderStatusBadge()}
           <button 
             onClick={() => setIsLoggedIn(false)} 
-            style={{ padding: '7px 16px', background: '#f5f5f7', color: '#555', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+            style={{ padding: '6px 14px', background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
           >
             End Shift
           </button>
         </div>
       </div>
 
-      {/* Main Content with container spacing matching Emergency App */}
-      <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '20px', maxWidth: '1240px', margin: '0 auto', width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column', gap: '18px' }}>
 
-        {gpsPermissionError && (
-          <div style={{ background: '#fee2e2', border: '1px solid #ef4444', color: '#991b1b', padding: '14px 20px', borderRadius: '12px', marginBottom: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 8px rgba(239, 68, 68, 0.15)' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>⚠️ {gpsPermissionError}</div>
-            <button onClick={requestDeviceGps} style={{ background: '#b91c1c', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Retry GPS</button>
+        {errorMessage && (
+          <div style={{ background: '#fee2e2', border: '1px solid #ef4444', color: '#991b1b', padding: '12px 18px', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>⚠️ {errorMessage}</div>
+            <button onClick={() => startTracking()} style={{ background: '#b91c1c', color: 'white', border: 'none', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.82rem' }}>Retry GPS</button>
           </div>
         )}
 
         {status === 'idle' && (
-          <div style={{ padding: '80px 40px', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', background: 'white', borderRadius: '16px', border: '1px solid #eee', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
-            <div style={{ fontSize: '4.5rem', marginBottom: '24px' }}>📡</div>
-            <h3 style={{ fontSize: '1.6rem', margin: '0 0 10px 0', color: '#222' }}>Waiting for dispatch...</h3>
-            <p style={{ color: '#666', maxWidth: '380px', lineHeight: '1.6', fontSize: '1rem', margin: 0 }}>You are online and marked as available. When an emergency is requested nearby, your screen will alert you immediately.</p>
+          <div style={{ padding: '80px 40px', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+            <div style={{ fontSize: '4.5rem', marginBottom: '20px' }}>📡</div>
+            <h3 style={{ fontSize: '1.6rem', margin: '0 0 10px 0', color: '#1e293b' }}>Hardware GPS Streaming Active</h3>
+            <p style={{ color: '#64748b', maxWidth: '420px', lineHeight: '1.6', fontSize: '1rem', margin: 0 }}>
+              Your device coordinates are streaming live to the central dispatch router. When an emergency is requested in your sector, this screen will sound and alert you immediately.
+            </p>
           </div>
         )}
 
         {status === 'assigned' && assignment && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ background: '#ffebee', padding: 28, borderRadius: 16, boxShadow: '0 10px 25px rgba(211, 47, 47, 0.1)', border: '1px solid #ffcdd2' }}>
+            <div style={{ background: '#fff1f2', padding: 26, borderRadius: 16, boxShadow: '0 10px 25px rgba(225, 29, 72, 0.08)', border: '1px solid #fecdd3' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h1 style={{ color: '#d32f2f', margin: 0, fontSize: '1.8rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <h1 style={{ color: '#e11d48', margin: 0, fontSize: '1.7rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
                   ⚠️ NEW EMERGENCY DISPATCH
                 </h1>
-                <span style={{ background: '#d32f2f', color: 'white', padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 'bold' }}>Immediate Action</span>
+                <span style={{ background: '#e11d48', color: 'white', padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 'bold' }}>Immediate Action</span>
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '22px' }}>
                 <div style={{ background: 'white', padding: '16px', borderRadius: '10px', boxShadow: '0 2px 6px rgba(0,0,0,0.04)' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase', fontWeight: 'bold' }}>Condition</div>
-                  <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#d32f2f', marginTop: '4px' }}>{assignment.emergency_type}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Condition</div>
+                  <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#e11d48', marginTop: '4px' }}>{assignment.emergency_type}</div>
                 </div>
                 <div style={{ background: 'white', padding: '16px', borderRadius: '10px', boxShadow: '0 2px 6px rgba(0,0,0,0.04)' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase', fontWeight: 'bold' }}>Severity</div>
-                  <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#ef6c00', marginTop: '4px' }}>{assignment.severity}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Severity</div>
+                  <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#d97706', marginTop: '4px' }}>{assignment.severity}</div>
                 </div>
                 <div style={{ background: 'white', padding: '16px', borderRadius: '10px', boxShadow: '0 2px 6px rgba(0,0,0,0.04)' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase', fontWeight: 'bold' }}>Assigned Hospital</div>
-                  <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#1565c0', marginTop: '4px' }}>{assignment.hospital?.name}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Assigned Hospital</div>
+                  <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#2563eb', marginTop: '4px' }}>{assignment.hospital?.name}</div>
                 </div>
                 <div style={{ background: 'white', padding: '16px', borderRadius: '10px', boxShadow: '0 2px 6px rgba(0,0,0,0.04)' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase', fontWeight: 'bold' }}>Estimated ETA</div>
-                  <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#2e7d32', marginTop: '4px' }}>{assignment.eta} mins</div>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Estimated ETA</div>
+                  <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#059669', marginTop: '4px' }}>{assignment.eta} mins</div>
                 </div>
               </div>
 
               <div style={{ display: 'flex', gap: 16 }}>
                 <button 
                   onClick={() => respondToAssignment(true)}
-                  style={{ flex: 1, padding: 18, fontSize: 19, background: '#d32f2f', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(211, 47, 47, 0.35)', transition: 'transform 0.1s' }}
+                  style={{ flex: 1, padding: 18, fontSize: 18, background: '#e11d48', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(225, 29, 72, 0.35)' }}
                 >
                   ✓ ACCEPT DISPATCH
                 </button>
                 <button 
                   onClick={() => respondToAssignment(false)}
-                  style={{ flex: 1, padding: 18, fontSize: 19, background: 'white', color: '#d32f2f', border: '2px solid #d32f2f', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold' }}
+                  style={{ flex: 1, padding: 18, fontSize: 18, background: 'white', color: '#e11d48', border: '2px solid #e11d48', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold' }}
                 >
                   ✕ DECLINE
                 </button>
               </div>
             </div>
-            
-            <div style={{ height: 380, borderRadius: 16, overflow: 'hidden', border: '1px solid #e0e0e0', boxShadow: '0 4px 16px rgba(0,0,0,0.06)' }}>
-              <MapContainer center={[assignment.patient_location.lat, assignment.patient_location.lng]} zoom={14} style={{ height: '100%', width: '100%' }}>
-                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                <Marker position={[assignment.patient_location.lat, assignment.patient_location.lng]}>
-                  <Popup>Patient Location</Popup>
-                </Marker>
-              </MapContainer>
-            </div>
           </div>
         )}
 
         {(status === 'en_route_to_patient' || status === 'en_route_to_hospital') && assignment && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Mission status & action card */}
-            <div style={{ padding: '22px 28px', background: 'white', borderRadius: '16px', border: '1px solid #eee', boxShadow: '0 4px 16px rgba(0,0,0,0.05)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            
+            {/* Objective & Status Card */}
+            <div style={{ padding: '20px 24px', background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
               <div>
-                <div style={{ fontSize: '0.85rem', color: '#888', textTransform: 'uppercase', fontWeight: 'bold' }}>Current Mission Objective</div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: status === 'en_route_to_patient' ? '#1565c0' : '#2e7d32', marginTop: '2px' }}>
-                  {status === 'en_route_to_patient' ? '📍 Driving to Pick Up Patient' : `🏥 Transporting Patient to ${assignment.hospital.name}`}
+                <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Current Objective</div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 'bold', color: status === 'en_route_to_patient' ? '#2563eb' : '#059669', marginTop: '2px' }}>
+                  {status === 'en_route_to_patient' ? '📍 Driving to Pick Up Patient' : `🏥 Transporting Patient to ${assignment.hospital?.name}`}
                 </div>
-                <div style={{ fontSize: '0.9rem', color: '#666', marginTop: '4px' }}>
+                <div style={{ fontSize: '0.88rem', color: '#64748b', marginTop: '4px' }}>
                   Patient Condition: <strong>{assignment.emergency_type} ({assignment.severity})</strong>
                 </div>
               </div>
@@ -618,7 +811,7 @@ export default function App() {
                   <button 
                     onClick={stepTowardsTarget}
                     title="Simulate driving 250m closer towards destination (Debug Mode Only)"
-                    style={{ padding: '14px 20px', fontSize: 15, background: '#f8fafc', color: '#1e293b', border: '1px solid #cbd5e1', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold' }}
+                    style={{ padding: '12px 18px', fontSize: 14, background: '#f8fafc', color: '#1e293b', border: '1px solid #cbd5e1', borderRadius: 10, cursor: 'pointer', fontWeight: 'bold' }}
                   >
                     🚗 Test Move 250m
                   </button>
@@ -626,14 +819,14 @@ export default function App() {
                 {status === 'en_route_to_patient' ? (
                   <button 
                     onClick={() => updateStatus('en_route_to_hospital')}
-                    style={{ padding: '16px 28px', fontSize: 17, background: '#1565c0', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(21, 101, 192, 0.3)' }}
+                    style={{ padding: '14px 24px', fontSize: 16, background: '#2563eb', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(37, 99, 235, 0.3)' }}
                   >
                     ✓ Confirm Patient Picked Up
                   </button>
                 ) : (
                   <button 
                     onClick={() => updateStatus('arrived_at_hospital')}
-                    style={{ padding: '16px 28px', fontSize: 17, background: '#2e7d32', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(46, 125, 50, 0.3)' }}
+                    style={{ padding: '14px 24px', fontSize: 16, background: '#059669', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(5, 150, 105, 0.3)' }}
                   >
                     ✓ Confirm Arrived at Hospital
                   </button>
@@ -643,11 +836,11 @@ export default function App() {
 
             {/* ER Bay Prepared Alert */}
             {erBayNotice && erBayNotice.prepared && (
-              <div style={{ background: '#ecfdf5', border: '1px solid #86efac', color: '#166534', padding: '16px 22px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 4px 14px rgba(22, 163, 74, 0.12)', flexWrap: 'wrap', gap: '10px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                  <span style={{ fontSize: '1.8rem' }}>🏥</span>
+              <div style={{ background: '#ecfdf5', border: '1px solid #86efac', color: '#166534', padding: '14px 20px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 4px 14px rgba(22, 163, 74, 0.12)', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '1.6rem' }}>🏥</span>
                   <div>
-                    <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>ER Intake Prepared: {erBayNotice.bay}</div>
+                    <div style={{ fontWeight: 'bold', fontSize: '1.05rem' }}>ER Intake Prepared: {erBayNotice.bay}</div>
                     <div style={{ fontSize: '0.85rem', color: '#14532d', marginTop: '2px' }}>{erBayNotice.notes || 'Emergency room team standing by for arrival.'}</div>
                   </div>
                 </div>
@@ -655,156 +848,153 @@ export default function App() {
               </div>
             )}
 
-            {/* Zero Beds Diversion Warning */}
-            {assignment.hospital && (assignment.hospital.beds_available === 0 || (assignment.hospital.icu_beds === 0 && assignment.hospital.general_beds === 0)) && (
-              <div style={{ background: '#fee2e2', border: '1px solid #ef4444', color: '#991b1b', padding: '14px 20px', borderRadius: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)' }}>
-                <span style={{ fontSize: '1.6rem' }}>⚠️</span>
-                <div>
-                  <div style={{ fontSize: '1rem' }}>DIVERSION ALERT: 0 Available Beds at {assignment.hospital.name}!</div>
-                  <div style={{ fontSize: '0.82rem', color: '#7f1d1d', fontWeight: 500, marginTop: '2px' }}>Destination hospital has reported full capacity. Contact ER dispatch or prepare for secondary rerouting.</div>
-                </div>
-              </div>
-            )}
-
-            {/* Destination Hospital Capacity & Named Specialist Roster Card */}
-            <div style={{ background: 'white', padding: '18px 24px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                <div>
-                  <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Destination Hospital Profile</span>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#1e293b' }}>{assignment.hospital?.name}</div>
-                </div>
-                <div style={{ fontSize: '0.82rem', background: '#f1f5f9', color: '#475569', padding: '6px 12px', borderRadius: '8px', fontWeight: 'bold' }}>
-                  Available Beds: <strong style={{ color: '#16a34a' }}>{assignment.hospital?.beds_available ?? ((assignment.hospital?.icu_beds || 0) + (assignment.hospital?.general_beds || 0))}</strong> (ICU: {assignment.hospital?.icu_beds ?? '—'}, Gen: {assignment.hospital?.general_beds ?? '—'}, Vents: {assignment.hospital?.ventilators ?? '—'})
-                </div>
-              </div>
-
-              {assignment.hospital?.specialists && assignment.hospital.specialists.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>On-Duty Specialists:</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                    {assignment.hospital.specialists.map((s, idx) => {
-                      const name = typeof s === 'object' ? s.name : `Dr. ${String(s).toUpperCase()}`;
-                      const spec = typeof s === 'object' ? s.specialty : s;
-                      const status = typeof s === 'object' ? s.status : 'Available';
-                      if (status === 'Off-Duty') return null;
-                      return (
-                        <span key={s.id || idx} style={{ background: '#f8fafc', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '6px', fontSize: '0.78rem', color: '#334155' }}>
-                          👨‍⚕️ <strong>{name}</strong> ({spec})
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Live GPS Tracking Control & Hardware Telemetry Banner */}
-            <div style={{ background: 'white', padding: '16px 22px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 14px rgba(0,0,0,0.04)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                <span style={{ 
-                  display: 'inline-flex', 
-                  alignItems: 'center', 
-                  gap: '8px', 
-                  padding: '6px 14px', 
-                  borderRadius: '20px', 
-                  fontWeight: 'bold', 
-                  fontSize: '0.85rem',
-                  background: trackingStatus === 'live' ? '#dcfce7' : (trackingStatus === 'permission_denied' ? '#fee2e2' : '#fef9c3'),
-                  color: trackingStatus === 'live' ? '#166534' : (trackingStatus === 'permission_denied' ? '#991b1b' : '#854d0e')
-                }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: trackingStatus === 'live' ? '#22c55e' : (trackingStatus === 'permission_denied' ? '#ef4444' : '#eab308') }}></span>
-                  {trackingStatus === 'live' && 'LIVE GPS STREAMING'}
-                  {trackingStatus === 'starting' && 'STARTING GPS...'}
-                  {trackingStatus === 'stale' && 'GPS SIGNAL STALE'}
-                  {trackingStatus === 'permission_denied' && 'GPS PERMISSION DENIED'}
-                  {trackingStatus === 'unavailable' && 'GPS UNAVAILABLE'}
-                  {trackingStatus === 'stopped' && 'GPS SHARING PAUSED'}
-                  {trackingStatus === 'idle' && 'GPS IDLE'}
-                </span>
-
-                <div style={{ fontSize: '0.88rem', color: '#475569', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                  {telemetry.accuracy !== null && (
-                    <span>🎯 Accuracy: <strong>±{telemetry.accuracy}m</strong></span>
-                  )}
-                  {telemetry.speed !== null && (
-                    <span>⚡ Speed: <strong>{telemetry.speed} km/h</strong></span>
-                  )}
-                  {telemetry.heading !== null && (
-                    <span>🧭 Heading: <strong>{telemetry.heading}°</strong></span>
-                  )}
-                </div>
-
-                {errorMessage && (
-                  <div style={{ color: '#dc2626', fontSize: '0.82rem', fontWeight: 600 }}>
-                    ⚠️ {errorMessage}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px' }}>
-                {isTracking ? (
-                  <button 
-                    onClick={() => stopTracking('manual_pause')}
-                    style={{ padding: '8px 16px', background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
-                  >
-                    ⏹ Pause GPS
-                  </button>
-                ) : (
-                  <button 
-                    onClick={() => startTracking()}
-                    style={{ padding: '8px 16px', background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
-                  >
-                    📡 Resume GPS
-                  </button>
-                )}
-              </div>
-            </div>
-
             {/* Live Google Maps Navigation Metrics Card */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
-              <div style={{ background: 'white', padding: '16px 20px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #2563eb', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
-                <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Live Road ETA</div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#1e40af', marginTop: '4px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px' }}>
+              <div style={{ background: 'white', padding: '14px 18px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #2563eb', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Dynamic Road ETA</div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 'bold', color: '#1e40af', marginTop: '3px' }}>
                   ⏱️ {formatDriverCountdown()}
                 </div>
               </div>
-              <div style={{ background: 'white', padding: '16px 20px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #059669', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
-                <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Remaining Distance</div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#065f46', marginTop: '4px' }}>
+              <div style={{ background: 'white', padding: '14px 18px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #059669', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Remaining Distance</div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 'bold', color: '#065f46', marginTop: '3px' }}>
                   📏 {formatDistance()}
                 </div>
               </div>
-              <div style={{ background: 'white', padding: '16px 20px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #d97706', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
-                <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Navigation System</div>
-                <div style={{ fontSize: '1.05rem', fontWeight: 'bold', color: '#92400e', marginTop: '6px' }}>
-                  🚦 Google Maps Blue Route
+              <div style={{ background: 'white', padding: '14px 18px', borderRadius: '14px', border: '1px solid #e2e8f0', borderLeft: '4px solid #d97706', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Camera Mode</div>
+                <div style={{ fontSize: '1rem', fontWeight: 'bold', color: isFollowing ? '#166534' : '#d97706', marginTop: '4px' }}>
+                  {isFollowing ? '🟢 Google Maps Auto-Follow' : '🟡 Free Explore (Recenter Below)'}
                 </div>
               </div>
             </div>
 
-            {/* Map Card */}
-            <div style={{ height: '540px', borderRadius: '16px', overflow: 'hidden', border: '1px solid #e0e0e0', boxShadow: '0 4px 20px rgba(0,0,0,0.07)' }}>
-              <MapContainer 
-                center={myLocation ? [myLocation.lat, myLocation.lng] : [assignment.patient_location.lat, assignment.patient_location.lng]} 
-                zoom={13} 
-                style={{ height: '100%', width: '100%' }}
-              >
-                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                <Routing 
-                  start={status === 'en_route_to_patient' ? (myLocation || assignment.ambulance_location || assignment.ambulance?.location || assignment.patient_location) : (myLocation || assignment.patient_location)} 
-                  end={status === 'en_route_to_patient' ? assignment.patient_location : assignment.hospital.location} 
-                  onRouteInfo={setRouteInfo}
+            {/* Live Navigation Map Card */}
+            <div style={{ height: '520px', borderRadius: '16px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.06)', position: 'relative' }}>
+              
+              {GOOGLE_MAPS_KEY && myLocation && activeDestination ? (
+                <GoogleMapsNavigation
+                  start={myLocation}
+                  end={activeDestination}
+                  heading={telemetry.heading}
+                  isFollowing={isFollowing}
+                  onUserPan={() => setIsFollowing(false)}
+                  onRecenter={handleRecenter}
                 />
-              </MapContainer>
+              ) : (
+                <MapContainer 
+                  center={myLocation ? [myLocation.lat, myLocation.lng] : [assignment.patient_location.lat, assignment.patient_location.lng]} 
+                  zoom={15} 
+                  style={{ height: '100%', width: '100%' }}
+                  whenCreated={(map) => { mapInstanceRef.current = map; }}
+                >
+                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                  
+                  {/* Google Maps-Style Smooth Camera Auto-Follower */}
+                  <CameraFollower 
+                    location={myLocation} 
+                    isFollowing={isFollowing} 
+                    onUserPan={() => setIsFollowing(false)} 
+                  />
+
+                  {/* Rotatable Driver Ambulance Marker */}
+                  {myLocation && (
+                    <Marker position={[myLocation.lat, myLocation.lng]} icon={createAmbulanceIcon(telemetry.heading)}>
+                      <Popup>
+                        <strong>Ambulance Unit</strong><br />
+                        Speed: {telemetry.speed} km/h<br />
+                        Heading: {telemetry.heading}°
+                      </Popup>
+                    </Marker>
+                  )}
+
+                  {/* Patient Pin */}
+                  {assignment.patient_location && (
+                    <Marker position={[assignment.patient_location.lat, assignment.patient_location.lng]}>
+                      <Popup>Patient Location</Popup>
+                    </Marker>
+                  )}
+
+                  {/* Dynamic Road Route */}
+                  <Routing 
+                    start={myLocation || assignment.patient_location} 
+                    end={activeDestination} 
+                    onRouteInfo={setRouteInfo}
+                  />
+                </MapContainer>
+              )}
+
+              {/* Floating Recenter Button (Just like Google Maps) */}
+              {!isFollowing && (
+                <button 
+                  onClick={handleRecenter}
+                  style={{
+                    position: 'absolute',
+                    bottom: '24px',
+                    right: '24px',
+                    zIndex: 1000,
+                    background: '#2563eb',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '30px',
+                    padding: '10px 20px',
+                    fontWeight: 'bold',
+                    fontSize: '0.9rem',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 14px rgba(37, 99, 235, 0.45)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  📍 Recenter Camera
+                </button>
+              )}
             </div>
+
+            {/* Destination Hospital Telemetry Card */}
+            {assignment.hospital && (
+              <div style={{ background: 'white', padding: '18px 24px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Destination Hospital Profile</span>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#1e293b' }}>{assignment.hospital?.name}</div>
+                  </div>
+                  <div style={{ fontSize: '0.82rem', background: '#f1f5f9', color: '#475569', padding: '6px 12px', borderRadius: '8px', fontWeight: 'bold' }}>
+                    Available Beds: <strong style={{ color: '#16a34a' }}>{assignment.hospital?.beds_available ?? ((assignment.hospital?.icu_beds || 0) + (assignment.hospital?.general_beds || 0))}</strong> (ICU: {assignment.hospital?.icu_beds ?? '—'}, Gen: {assignment.hospital?.general_beds ?? '—'}, Vents: {assignment.hospital?.ventilators ?? '—'})
+                  </div>
+                </div>
+
+                {assignment.hospital?.specialists && assignment.hospital.specialists.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>On-Duty Specialists:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {assignment.hospital.specialists.map((s, idx) => {
+                        const name = typeof s === 'object' ? s.name : `Dr. ${String(s).toUpperCase()}`;
+                        const spec = typeof s === 'object' ? s.specialty : s;
+                        const specStatus = typeof s === 'object' ? s.status : 'Available';
+                        if (specStatus === 'Off-Duty') return null;
+                        return (
+                          <span key={s.id || idx} style={{ background: '#f8fafc', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '6px', fontSize: '0.78rem', color: '#334155' }}>
+                            👨‍⚕️ <strong>{name}</strong> ({spec})
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         )}
         
         {status === 'arrived_at_hospital' && (
-          <div style={{ padding: '70px 40px', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', background: 'white', borderRadius: '16px', border: '1px solid #eee', boxShadow: '0 4px 14px rgba(0,0,0,0.05)' }}>
-            <div style={{ fontSize: '4.5rem', marginBottom: '20px', color: '#4caf50' }}>✅</div>
-            <h2 style={{ margin: '0 0 10px 0', color: '#222', fontSize: '1.8rem' }}>Mission Completed!</h2>
-            <p style={{ color: '#666', fontSize: '1.05rem', margin: 0 }}>Patient successfully transferred to {assignment?.hospital?.name || 'the emergency department'}. Resetting unit to available...</p>
+          <div style={{ padding: '70px 40px', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 14px rgba(0,0,0,0.04)' }}>
+            <div style={{ fontSize: '4.5rem', marginBottom: '20px', color: '#16a34a' }}>✅</div>
+            <h2 style={{ margin: '0 0 10px 0', color: '#1e293b', fontSize: '1.8rem' }}>Mission Completed!</h2>
+            <p style={{ color: '#64748b', fontSize: '1.05rem', margin: 0 }}>Patient successfully transferred to {assignment?.hospital?.name || 'the emergency department'}. Resetting unit to available...</p>
           </div>
         )}
       </div>

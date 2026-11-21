@@ -7,20 +7,53 @@ import 'leaflet/dist/leaflet.css';
 import HospitalScoreboard from './HospitalScoreboard';
 import EmergencyChatbot from './EmergencyChatbot';
 
-function MapRecenter({ center, enabled = false }) {
+// Mathematical Bearing calculation for smooth vehicle compass rotation
+function calculateBearing(lat1, lon1, lat2, lon2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const toDeg = (r) => (r * 180) / Math.PI;
+  const phi1 = toRad(lat1);
+  const phi2 = toRad(lat2);
+  const deltaLambda = toRad(lon2 - lon1);
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(deltaLambda);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// Google Maps-Style Live Camera Follower & User Drag Detector
+function CameraFollower({ center, enabled = true, onUserDrag }) {
   const map = useMap();
+
   useEffect(() => {
-    if (enabled && center && center[0] && center[1]) {
-      map.panTo(center, { animate: true });
+    if (!map) return;
+    const handleDragStart = () => {
+      if (onUserDrag) onUserDrag();
+    };
+    map.on('dragstart', handleDragStart);
+    return () => {
+      map.off('dragstart', handleDragStart);
+    };
+  }, [map, onUserDrag]);
+
+  useEffect(() => {
+    if (!map || !center || !enabled) return;
+    if (typeof center[0] === 'number' && typeof center[1] === 'number' && !isNaN(center[0])) {
+      map.panTo(center, {
+        animate: true,
+        duration: 0.8,
+        easeLinearity: 0.25
+      });
     }
-  }, [center, map, enabled]);
+  }, [map, center?.[0], center?.[1], enabled]);
+
   return null;
 }
 
 function MapBoundsFitter({ patientLoc, ambulanceLoc, hospitalLoc, enabled = true }) {
   const map = useMap();
+  const hasFittedOnceRef = React.useRef(false);
+
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || hasFittedOnceRef.current) return;
     const pts = [];
     if (patientLoc?.lat && patientLoc?.lng) pts.push([patientLoc.lat, patientLoc.lng]);
     if (ambulanceLoc?.lat && ambulanceLoc?.lng) pts.push([ambulanceLoc.lat, ambulanceLoc.lng]);
@@ -29,12 +62,155 @@ function MapBoundsFitter({ patientLoc, ambulanceLoc, hospitalLoc, enabled = true
     if (pts.length >= 2) {
       try {
         map.fitBounds(pts, { padding: [60, 60], maxZoom: 15 });
+        hasFittedOnceRef.current = true;
       } catch (e) {}
     } else if (pts.length === 1) {
       map.setView(pts[0], 14);
+      hasFittedOnceRef.current = true;
     }
   }, [map, patientLoc?.lat, patientLoc?.lng, ambulanceLoc?.lat, ambulanceLoc?.lng, hospitalLoc?.lat, hospitalLoc?.lng, enabled]);
   return null;
+}
+
+const GOOGLE_MAPS_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
+
+// Optional Google Maps component when API key is provided
+function GoogleMapsCitizenTracking({
+  ambulanceLoc,
+  patientLoc,
+  hospitalLoc,
+  heading = 0,
+  isFollowing,
+  onUserDrag,
+  journeyPhase,
+  ambulanceStatus,
+  hospitalName
+}) {
+  const containerRef = React.useRef(null);
+  const mapRef = React.useRef(null);
+  const ambMarkerRef = React.useRef(null);
+  const patMarkerRef = React.useRef(null);
+  const hospMarkerRef = React.useRef(null);
+  const directionsRendererRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!GOOGLE_MAPS_KEY) return;
+    const initMap = () => {
+      if (!window.google || !containerRef.current) return;
+      const initialCenter = ambulanceLoc || patientLoc;
+      const gMap = new window.google.maps.Map(containerRef.current, {
+        center: { lat: initialCenter.lat, lng: initialCenter.lng },
+        zoom: 14,
+        disableDefaultUI: false,
+        zoomControl: true,
+        streetViewControl: false,
+        fullscreenControl: false
+      });
+
+      new window.google.maps.TrafficLayer().setMap(gMap);
+
+      gMap.addListener('dragstart', () => {
+        if (onUserDrag) onUserDrag();
+      });
+
+      mapRef.current = gMap;
+
+      ambMarkerRef.current = new window.google.maps.Marker({
+        position: { lat: ambulanceLoc.lat, lng: ambulanceLoc.lng },
+        map: gMap,
+        title: `Ambulance - ${ambulanceStatus}`,
+        icon: {
+          path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+          scale: 6,
+          fillColor: '#2563eb',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+          rotation: heading || 0
+        }
+      });
+
+      if (patientLoc) {
+        patMarkerRef.current = new window.google.maps.Marker({
+          position: { lat: patientLoc.lat, lng: patientLoc.lng },
+          map: gMap,
+          title: 'Patient Location'
+        });
+      }
+
+      if (hospitalLoc) {
+        hospMarkerRef.current = new window.google.maps.Marker({
+          position: { lat: hospitalLoc.lat, lng: hospitalLoc.lng },
+          map: gMap,
+          title: hospitalName || 'Hospital'
+        });
+      }
+
+      const directionsService = new window.google.maps.DirectionsService();
+      const directionsRenderer = new window.google.maps.DirectionsRenderer({
+        map: gMap,
+        suppressMarkers: true,
+        polylineOptions: {
+          strokeColor: '#2563eb',
+          strokeWeight: 5,
+          strokeOpacity: 0.85
+        }
+      });
+      directionsRendererRef.current = directionsRenderer;
+
+      const dest = journeyPhase === 'to_hospital' ? hospitalLoc : patientLoc;
+      if (dest) {
+        directionsService.route(
+          {
+            origin: { lat: ambulanceLoc.lat, lng: ambulanceLoc.lng },
+            destination: { lat: dest.lat, lng: dest.lng },
+            travelMode: window.google.maps.TravelMode.DRIVING
+          },
+          (result, status) => {
+            if (status === 'OK' && directionsRendererRef.current) {
+              directionsRendererRef.current.setDirections(result);
+            }
+          }
+        );
+      }
+    };
+
+    if (window.google && window.google.maps) {
+      initMap();
+    } else {
+      const scriptId = 'google-maps-citizen-sdk';
+      if (!document.getElementById(scriptId)) {
+        const script = document.createElement('script');
+        script.id = scriptId;
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_KEY}&libraries=places`;
+        script.async = true;
+        script.defer = true;
+        script.onload = initMap;
+        document.head.appendChild(script);
+      }
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!mapRef.current || !ambulanceLoc) return;
+    if (ambMarkerRef.current) {
+      ambMarkerRef.current.setPosition({ lat: ambulanceLoc.lat, lng: ambulanceLoc.lng });
+      ambMarkerRef.current.setIcon({
+        path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+        scale: 6,
+        fillColor: '#2563eb',
+        fillOpacity: 1,
+        strokeColor: '#ffffff',
+        strokeWeight: 2,
+        rotation: heading || 0
+      });
+    }
+    if (isFollowing) {
+      mapRef.current.panTo({ lat: ambulanceLoc.lat, lng: ambulanceLoc.lng });
+    }
+  }, [ambulanceLoc, heading, isFollowing]);
+
+  return <div ref={containerRef} style={{ width: '100%', height: '100%', borderRadius: '15px' }} />;
 }
 
 // Fix for default marker icons in react-leaflet
@@ -196,9 +372,39 @@ function TrackingScreen({ data, onBack }) {
   });
   const [isAdmitted, setIsAdmitted] = useState(false);
   const [reroutedNotice, setReroutedNotice] = useState(null);
-  const [autoFollow, setAutoFollow] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(true);
+  const [packetCount, setPacketCount] = useState(0);
   const ambulanceMarkerRef = React.useRef(null);
   const lastUpdateEpochRef = React.useRef(Date.now());
+  const prevAmbPosRef = React.useRef(initialAmbulanceLoc);
+  const currentHeadingRef = React.useRef(0);
+
+  // Screen Wake Lock while trip tracking is active
+  useEffect(() => {
+    let wakeLock = null;
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {}
+    };
+    requestWakeLock();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+      }
+    };
+  }, []);
 
   const [patientRoute, setPatientRoute] = useState(() => 
     generateRoadWaypoints(initialAmbulanceLoc, data.patient_location)
@@ -427,7 +633,25 @@ function TrackingScreen({ data, onBack }) {
         const newCoords = { lat, lng };
         setAmbulanceLocation(newCoords);
         animateMarkerLerp(lat, lng, 1800);
+
+        // Smooth mathematical compass bearing fallback
+        let newHeading = update.heading;
+        if ((newHeading === null || newHeading === undefined || newHeading === 0) && prevAmbPosRef.current) {
+          const dLat = Math.abs(lat - prevAmbPosRef.current.lat);
+          const dLng = Math.abs(lng - prevAmbPosRef.current.lng);
+          if (dLat > 0.00001 || dLng > 0.00001) {
+            newHeading = calculateBearing(prevAmbPosRef.current.lat, prevAmbPosRef.current.lng, lat, lng);
+          } else {
+            newHeading = currentHeadingRef.current;
+          }
+        }
+        if (typeof newHeading === 'number') {
+          currentHeadingRef.current = Math.round(newHeading);
+        }
+        prevAmbPosRef.current = { lat, lng };
       }
+
+      setPacketCount(c => c + 1);
 
       if (update.status) setAmbulanceStatus(update.status);
       if (update.phase) setJourneyPhase(update.phase);
@@ -440,7 +664,7 @@ function TrackingScreen({ data, onBack }) {
       setTelemetry({
         accuracy: update.accuracy !== undefined ? update.accuracy : null,
         speed: update.speed !== undefined ? update.speed : null,
-        heading: update.heading !== undefined ? update.heading : null,
+        heading: currentHeadingRef.current,
         timestamp: update.timestamp || new Date().toISOString()
       });
 
@@ -665,6 +889,34 @@ function TrackingScreen({ data, onBack }) {
             <span className="live-nav-headline">{ambulanceStatus}</span>
           </div>
           <div className="live-nav-right">
+            {/* Live GPS Telemetry Pill */}
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: '#0f172a',
+              color: '#38bdf8',
+              padding: '5px 12px',
+              borderRadius: '20px',
+              fontSize: '0.8rem',
+              fontFamily: 'monospace',
+              fontWeight: 'bold',
+              border: '1px solid #1e293b'
+            }}>
+              <span style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: '#22c55e',
+                boxShadow: '0 0 8px #22c55e',
+                display: 'inline-block'
+              }}></span>
+              <span>{ambulanceLocation?.lat ? `${ambulanceLocation.lat.toFixed(4)}, ${ambulanceLocation.lng.toFixed(4)}` : 'GPS Acquired'}</span>
+              {telemetry.accuracy && <span style={{ color: '#94a3b8' }}>±{Math.round(telemetry.accuracy)}m</span>}
+              {telemetry.speed !== null && <span style={{ color: '#e2e8f0' }}>{telemetry.speed} km/h</span>}
+              <span style={{ color: '#64748b' }}>#{packetCount}</span>
+            </div>
+
             <span className="live-nav-chip">⏱️ Remaining: <strong>{formatCountdown()}</strong></span>
             <span className="live-nav-chip">📏 Distance: <strong>{formatDistance()}</strong></span>
             {telemetry.accuracy !== null && (
@@ -677,10 +929,10 @@ function TrackingScreen({ data, onBack }) {
               📡 {secondsSinceLastUpdate === 0 ? 'Live' : `${secondsSinceLastUpdate}s ago`}
             </span>
             <button 
-              onClick={() => setAutoFollow(prev => !prev)}
+              onClick={() => setIsFollowing(prev => !prev)}
               style={{
-                background: autoFollow ? '#2563eb' : '#f8fafc',
-                color: autoFollow ? 'white' : '#334155',
+                background: isFollowing ? '#2563eb' : '#f8fafc',
+                color: isFollowing ? 'white' : '#334155',
                 border: '1px solid #cbd5e1',
                 padding: '6px 14px',
                 borderRadius: '8px',
@@ -689,7 +941,7 @@ function TrackingScreen({ data, onBack }) {
                 fontSize: '0.85rem'
               }}
             >
-              {autoFollow ? '✓ Following Unit' : '🎯 Follow Unit'}
+              {isFollowing ? '✓ Following Unit' : '🎯 Follow Unit'}
             </button>
           </div>
         </div>
@@ -702,89 +954,135 @@ function TrackingScreen({ data, onBack }) {
           </div>
         )}
 
-        {/* Middle Section - Map with Highlighted Road Directions */}
-        <div className="map-section">
-          <MapContainer 
-            center={center} 
-            zoom={13} 
-            style={{ height: '100%', width: '100%', borderRadius: '15px' }}
-          >
-            <TileLayer
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        {/* Middle Section - Map with Highlighted Road Directions & Camera Follow */}
+        <div className="map-section" style={{ position: 'relative' }}>
+          {GOOGLE_MAPS_KEY ? (
+            <GoogleMapsCitizenTracking
+              ambulanceLoc={ambulanceLocation}
+              patientLoc={patientLocation}
+              hospitalLoc={data?.hospital?.location}
+              heading={telemetry.heading}
+              isFollowing={isFollowing}
+              onUserDrag={() => setIsFollowing(false)}
+              journeyPhase={journeyPhase}
+              ambulanceStatus={ambulanceStatus}
+              hospitalName={data?.hospital?.name}
             />
-            <MapRecenter center={[ambulanceLocation.lat, ambulanceLocation.lng]} enabled={autoFollow} />
-            <MapBoundsFitter 
-              patientLoc={patientLocation} 
-              ambulanceLoc={ambulanceLocation} 
-              hospitalLoc={data?.hospital?.location} 
-              enabled={!autoFollow} 
-            />
-            
-            <Marker position={[patientLocation.lat, patientLocation.lng]} icon={patientIcon}>
-              <Popup>Patient Location</Popup>
-            </Marker>
-            
-            <Marker position={[ambulanceLocation.lat, ambulanceLocation.lng]} icon={createAmbulanceIcon(telemetry.heading)} ref={ambulanceMarkerRef}>
-              <Popup>Ambulance - {ambulanceStatus}</Popup>
-            </Marker>
-            
-            <Marker position={[data.hospital.location.lat, data.hospital.location.lng]} icon={hospitalIcon}>
-              <Popup>{data.hospital.name}</Popup>
-            </Marker>
-            
-            {/* Google Maps Highlighted Road Directions */}
-            {/* Leg 1: Ambulance to Patient (Google Maps blue road route) */}
-            {patientRoute.length > 0 ? (
-              <>
-                <Polyline 
-                  positions={patientRoute} 
-                  pathOptions={{ color: '#1a73e8', weight: 8, opacity: 0.35, lineCap: 'round', lineJoin: 'round' }} 
-                />
-                <Polyline 
-                  positions={patientRoute} 
-                  pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }} 
-                />
-              </>
-            ) : (
-              <Polyline 
-                positions={[[ambulanceLocation.lat, ambulanceLocation.lng], [data.patient_location.lat, data.patient_location.lng]]} 
-                pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.8 }} 
+          ) : (
+            <MapContainer 
+              center={center} 
+              zoom={14} 
+              style={{ height: '100%', width: '100%', borderRadius: '15px' }}
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               />
-            )}
+              <CameraFollower 
+                center={[ambulanceLocation.lat, ambulanceLocation.lng]} 
+                enabled={isFollowing} 
+                onUserDrag={() => setIsFollowing(false)} 
+              />
+              <MapBoundsFitter 
+                patientLoc={patientLocation} 
+                ambulanceLoc={ambulanceLocation} 
+                hospitalLoc={data?.hospital?.location} 
+                enabled={!isFollowing} 
+              />
+              
+              <Marker position={[patientLocation.lat, patientLocation.lng]} icon={patientIcon}>
+                <Popup>Patient Location</Popup>
+              </Marker>
+              
+              <Marker position={[ambulanceLocation.lat, ambulanceLocation.lng]} icon={createAmbulanceIcon(telemetry.heading)} ref={ambulanceMarkerRef}>
+                <Popup>Ambulance - {ambulanceStatus}</Popup>
+              </Marker>
+              
+              <Marker position={[data.hospital.location.lat, data.hospital.location.lng]} icon={hospitalIcon}>
+                <Popup>{data.hospital.name}</Popup>
+              </Marker>
+              
+              {/* Google Maps Highlighted Road Directions */}
+              {/* Leg 1: Ambulance to Patient (Google Maps blue road route) */}
+              {patientRoute.length > 0 ? (
+                <>
+                  <Polyline 
+                    positions={patientRoute} 
+                    pathOptions={{ color: '#1a73e8', weight: 8, opacity: 0.35, lineCap: 'round', lineJoin: 'round' }} 
+                  />
+                  <Polyline 
+                    positions={patientRoute} 
+                    pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }} 
+                  />
+                </>
+              ) : (
+                <Polyline 
+                  positions={[[ambulanceLocation.lat, ambulanceLocation.lng], [data.patient_location.lat, data.patient_location.lng]]} 
+                  pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.8 }} 
+                />
+              )}
 
-            {/* Leg 2: Patient to Hospital (Google Maps emerald road route) */}
-            {hospitalRoute.length > 0 ? (
-              <>
+              {/* Leg 2: Patient to Hospital (Google Maps emerald road route) */}
+              {hospitalRoute.length > 0 ? (
+                <>
+                  <Polyline 
+                    positions={hospitalRoute} 
+                    pathOptions={{ 
+                      color: journeyPhase === 'to_hospital' ? '#1a73e8' : '#059669', 
+                      weight: journeyPhase === 'to_hospital' ? 8 : 7, 
+                      opacity: 0.3, 
+                      lineCap: 'round', 
+                      lineJoin: 'round' 
+                    }} 
+                  />
+                  <Polyline 
+                    positions={hospitalRoute} 
+                    pathOptions={{ 
+                      color: journeyPhase === 'to_hospital' ? '#2563eb' : '#10b981', 
+                      weight: journeyPhase === 'to_hospital' ? 5 : 4, 
+                      dashArray: journeyPhase === 'to_hospital' ? null : '6, 8', 
+                      opacity: 0.95, 
+                      lineCap: 'round', 
+                      lineJoin: 'round' 
+                    }} 
+                  />
+                </>
+              ) : (
                 <Polyline 
-                  positions={hospitalRoute} 
-                  pathOptions={{ 
-                    color: journeyPhase === 'to_hospital' ? '#1a73e8' : '#059669', 
-                    weight: journeyPhase === 'to_hospital' ? 8 : 7, 
-                    opacity: 0.3, 
-                    lineCap: 'round', 
-                    lineJoin: 'round' 
-                  }} 
+                  positions={[[data.patient_location.lat, data.patient_location.lng], [data.hospital.location.lat, data.hospital.location.lng]]} 
+                  pathOptions={{ color: '#10b981', weight: 4, dashArray: '6, 8', opacity: 0.8 }} 
                 />
-                <Polyline 
-                  positions={hospitalRoute} 
-                  pathOptions={{ 
-                    color: journeyPhase === 'to_hospital' ? '#2563eb' : '#10b981', 
-                    weight: journeyPhase === 'to_hospital' ? 5 : 4, 
-                    dashArray: journeyPhase === 'to_hospital' ? null : '6, 8', 
-                    opacity: 0.95, 
-                    lineCap: 'round', 
-                    lineJoin: 'round' 
-                  }} 
-                />
-              </>
-            ) : (
-              <Polyline 
-                positions={[[data.patient_location.lat, data.patient_location.lng], [data.hospital.location.lat, data.hospital.location.lng]]} 
-                pathOptions={{ color: '#10b981', weight: 4, dashArray: '6, 8', opacity: 0.8 }} 
-              />
-            )}
-          </MapContainer>
+              )}
+            </MapContainer>
+          )}
+
+          {/* Floating Recenter Button (Google Maps-Style) */}
+          {!isFollowing && (
+            <button
+              onClick={() => setIsFollowing(true)}
+              className="recenter-camera-btn"
+              style={{
+                position: 'absolute',
+                bottom: 24,
+                right: 24,
+                zIndex: 1000,
+                background: '#2563eb',
+                color: 'white',
+                border: 'none',
+                borderRadius: '24px',
+                padding: '10px 18px',
+                fontWeight: 'bold',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                boxShadow: '0 4px 14px rgba(37,99,235,0.4)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <span>📍</span> Recenter Camera
+            </button>
+          )}
         </div>
 
         {/* Bottom Section - Details */}

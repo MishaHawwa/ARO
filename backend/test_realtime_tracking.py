@@ -456,5 +456,65 @@ class TestRealTimeTracking(unittest.TestCase):
         res = self.client.post('/api/emergency', json={'type': 'Heart Attack'})
         self.assertEqual(res.status_code, 400)
 
+    def test_sequential_movement_distance_eta_recalculation(self):
+        """Sequential coordinate movement continuously updates stored position, recalculates remaining distance and ETA."""
+        emg = self._create_test_emergency()
+        emg_id = emg['emergency_id']
+        amb_id = emg['ambulance']['id']
+
+        # Tick 1: Initial moving position
+        time.sleep(0.8)
+        now1 = time.time()
+        ok1, res1 = process_location_update({
+            'ambulance_id': amb_id,
+            'emergency_id': emg_id,
+            'latitude': 12.8800,
+            'longitude': 74.8500,
+            'speed': 40.0,
+            'timestamp': now1
+        })
+        self.assertTrue(ok1)
+        self.assertFalse(res1.get('is_stationary'))
+        dist1 = res1['distance_meters']
+        eta1 = res1['eta']
+        self.assertEqual(ACTIVE_EMERGENCIES[emg_id]['ambulance_location']['lat'], 12.8800)
+        self.assertEqual(ACTIVE_EMERGENCIES[emg_id]['ambulance_location']['lng'], 74.8500)
+
+        # Tick 2: Moved closer to patient (12.8725, 74.8440)
+        time.sleep(0.8)
+        now2 = now1 + 2.0
+        ok2, res2 = process_location_update({
+            'ambulance_id': amb_id,
+            'emergency_id': emg_id,
+            'latitude': 12.8760,
+            'longitude': 74.8470,
+            'speed': 45.0,
+            'timestamp': now2
+        })
+        self.assertTrue(ok2)
+        self.assertFalse(res2.get('is_stationary'))
+        dist2 = res2['distance_meters']
+        eta2 = res2['eta']
+        self.assertLess(dist2, dist1)
+        self.assertLessEqual(eta2, eta1)
+        self.assertEqual(ACTIVE_EMERGENCIES[emg_id]['ambulance_location']['lat'], 12.8760)
+
+        # Tick 3: Moved even closer to patient
+        time.sleep(0.8)
+        now3 = now2 + 2.0
+        ok3, res3 = process_location_update({
+            'ambulance_id': amb_id,
+            'emergency_id': emg_id,
+            'latitude': 12.8730,
+            'longitude': 74.8445,
+            'speed': 30.0,
+            'timestamp': now3
+        })
+        self.assertTrue(ok3)
+        self.assertFalse(res3.get('is_stationary'))
+        dist3 = res3['distance_meters']
+        self.assertLess(dist3, dist2)
+        self.assertEqual(ACTIVE_EMERGENCIES[emg_id]['ambulance_location']['lat'], 12.8730)
+
 if __name__ == '__main__':
     unittest.main()
